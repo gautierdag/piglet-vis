@@ -49,15 +49,23 @@ def main(hparams):
     checkpoint_callback = ModelCheckpoint(
         monitor="val/loss", dirpath=f"{hparams.output_dir}/checkpoints/{run_name}"
     )
-    trainer = pl.Trainer(
-        max_epochs=hparams.max_epochs,
-        logger=wandb_logger,
-        gpus=hparams.gpus,
-        callbacks=[checkpoint_callback],
-        limit_train_batches=10,
-        limit_val_batches=10,
-        log_every_n_steps=1,
-    )
+    if hparams.fast:
+        trainer = pl.Trainer(
+            max_epochs=hparams.max_epochs,
+            logger=wandb_logger,
+            gpus=hparams.gpus,
+            callbacks=[checkpoint_callback],
+            limit_train_batches=10,
+            limit_val_batches=10,
+            log_every_n_steps=1,
+        )
+    else:
+        trainer = pl.Trainer(
+            max_epochs=hparams.max_epochs,
+            logger=wandb_logger,
+            gpus=hparams.gpus,
+            callbacks=[checkpoint_callback],
+        )
 
     print("Training...")
     trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=[val_loader])
@@ -81,6 +89,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--max-epochs", default=20, type=int, help="max number of training epochs"
     )
+    parser.add_argument("--fast", action="store_true", help="fast run for testing")
 
     args = parser.parse_args()
 
