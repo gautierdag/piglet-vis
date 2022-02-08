@@ -236,7 +236,7 @@ class Piglet(pl.LightningModule):
             h_o_post_ouput, objects_labels_post
         )
         self.log("val/loss", avg_loss)
-        return (predictions, objects_labels_pre, objects_labels_post)
+        return (predictions.cpu(), objects_labels_pre.cpu(), objects_labels_post.cpu())
 
     def validation_epoch_end(self, validation_step_outputs) -> None:
         object_attribute_predictions_post = []
