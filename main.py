@@ -6,7 +6,7 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.utilities.seed import seed_everything
-import wandb
+
 
 from dataset import PigPenDataset
 from model import Piglet
@@ -43,7 +43,13 @@ def main(hparams):
         pin_memory=torch.cuda.is_available(),
     )
     print("Creating Model")
-    model = Piglet(reverse_object_mapping_dir=hparams.input_dir)
+    model = Piglet(
+        reverse_object_mapping_dir=hparams.input_dir,
+        hidden_size=hparams.hidden_size,
+        num_layers=hparams.num_layers,
+        num_heads=hparams.num_heads,
+        dropout=hparams.dropout,
+    )
 
     print("Creating Trainer")
     checkpoint_callback = ModelCheckpoint(
@@ -89,6 +95,16 @@ if __name__ == "__main__":
     parser.add_argument(
         "--max-epochs", default=20, type=int, help="max number of training epochs"
     )
+    parser.add_argument(
+        "--hidden-size", default=256, type=int, help="number of hidden units per layer"
+    )
+    parser.add_argument(
+        "--num-layers", default=3, type=int, help="number of layers per sub model"
+    )
+    parser.add_argument(
+        "--num-heads", default=4, type=int, help="number of heads in each transformer"
+    )
+    parser.add_argument("--dropout", default=0.1, type=float, help="dropout parameter")
     parser.add_argument("--fast", action="store_true", help="fast run for testing")
 
     args = parser.parse_args()
