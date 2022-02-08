@@ -18,7 +18,7 @@ class Piglet(pl.LightningModule):
         num_attributes=38,
         action_embedding_size=10,
         none_object_index=102,
-        reverse_object_mapping="data/reverse_object_mapping.pkl",
+        reverse_object_mapping_dir="data",
     ):
         """
         Args:
@@ -48,7 +48,10 @@ class Piglet(pl.LightningModule):
         # mask for embedding layer output -> based on position
         # mask probability to 0 for other attributes when looking at a specific attribute
         # This is needed because we are using a single embedding layer for all object attributes
-        with open(reverse_object_mapping, "rb") as f:
+        reverse_object_mapper_path = (
+            f"{reverse_object_mapping_dir}/reverse_object_mapping.pkl"
+        )
+        with open(reverse_object_mapper_path, "rb") as f:
             reverse_object_mapper = pickle.load(f)
         indexes = torch.tensor(
             [
