@@ -6,9 +6,9 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.utilities.seed import seed_everything
+from transformers import AutoTokenizer
 
-
-from dataset import PigPenDataset
+from dataset import PigPenDataset, collate_fn_generator
 from model import Piglet
 
 
@@ -71,14 +71,63 @@ def main(hparams):
             logger=wandb_logger,
             gpus=hparams.gpus,
             callbacks=[checkpoint_callback],
+            val_check_interval=0.1,  # check val 10x per epoch
         )
 
     print("Training...")
     trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=[val_loader])
 
+    # print("Loading Annotated Dataset")
+    # annotated_train_dataset = PigPenDataset(
+    #     data_dir=f"{hparams.input_dir}/annotated", data_split="train"
+    # )
+    # annotated_val_dataset = PigPenDataset(
+    #     data_dir=f"{hparams.input_dir}/annotated", data_split="val"
+    # )
+    # annotated_test_dataset = PigPenDataset(
+    #     data_dir=f"{hparams.input_dir}/annotated", data_split="test"
+    # )
+
+    # tokenizer = AutoTokenizer.from_pretrained(
+    #     hparams.bert_model,
+    #     cache_dir=f"output/bert-models/{hparams.bert_model}",
+    #     model_max_length=512,
+    # )
+    # collate_fn = collate_fn_generator(tokenizer)
+
+    # annotated_train_loader = DataLoader(
+    #     annotated_train_dataset,
+    #     batch_size=64,
+    #     shuffle=True,
+    #     num_workers=4,
+    #     pin_memory=torch.cuda.is_available(),
+    #     collate_fn=collate_fn,
+    # )
+    # annotated_val_loader = DataLoader(
+    #     annotated_val_dataset,
+    #     batch_size=64,
+    #     shuffle=False,
+    #     num_workers=4,
+    #     pin_memory=torch.cuda.is_available(),
+    #     collate_fn=collate_fn,
+    # )
+    # annotated_test_loader = DataLoader(
+    #     annotated_test_dataset,
+    #     batch_size=64,
+    #     shuffle=False,
+    #     num_workers=4,
+    #     pin_memory=torch.cuda.is_available(),
+    #     collate_fn=collate_fn,
+    # )
+
+    # m = Piglet.load_from_checkpoint(
+    #     "/home/gautier/Desktop/hog/output/checkpoints/driven-jazz-49/epoch=19-step=9259.ckpt",
+    #     strict=False,
+    #     symbolic_action=False,
+    # )
+
 
 if __name__ == "__main__":
-    seed_everything(42)
 
     parser = ArgumentParser()
     parser.add_argument(
@@ -104,9 +153,17 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num-heads", default=4, type=int, help="number of heads in each transformer"
     )
+    parser.add_argument(
+        "--bert-model",
+        default="roberta-base",
+        type=str,
+        help="LM model to use as action encoder",
+    )
+    parser.add_argument("--seed", default=42, type=int, help="seed")
     parser.add_argument("--dropout", default=0.1, type=float, help="dropout parameter")
     parser.add_argument("--fast", action="store_true", help="fast run for testing")
 
     args = parser.parse_args()
 
+    seed_everything(int(args.seed))
     main(args)

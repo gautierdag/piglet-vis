@@ -1,6 +1,9 @@
+import random
+from typing import Callable, List, Dict, Union, Optional
+from tokenizers import Tokenizer
 import torch
 from torch.utils.data import Dataset
-from typing import Literal, Optional
+from typing import Callable, Literal, Optional
 import numpy as np
 from PIL import Image
 import torchvision.transforms as transforms
@@ -25,24 +28,29 @@ class PigPenDataset(Dataset):
         self,
         data_dir="../data",
         data_split: Optional[Literal["train", "val", "test"]] = "train",
-        return_images=False,
-        return_annotations=False,
+        images=False,
+        annotations=False,
+        randomise_annotations=False,
     ):
         """
         Args:
             data_dir: directory containing the data
             data_split: train, val or test
-            return_images: if True, return the images as well as the action/object vectors
+            images: if True, return the images as well as the action/object vectors
+            annotations: if True, return the annotations as well as the action/object vectors
+            randomise_annotations: if True, randomly select one of the three annotations
         """
+
         self.data_split = data_split
-        self.return_images = return_images
-        self.return_annotations = return_annotations
+        self.images = images
+        self.annotations = annotations
+        self.randomise_annotations = randomise_annotations
 
         self.action_matrix = np.load(f"{data_dir}/actions_{data_split}.npy")
         self.objects_matrix = np.load(f"{data_dir}/objects_{data_split}.npy")
         assert len(self.action_matrix) == len(self.objects_matrix)
 
-        if self.return_images:
+        if self.images:
             image_indices_file = f"{data_dir}/img_indices_{data_split}.npy"
             self.image_directory = f"{data_dir}/{data_split}"
 
@@ -50,14 +58,21 @@ class PigPenDataset(Dataset):
             assert len(self.action_matrix) == len(self.action_matrix)
             self.transforms = transforms.Compose([transforms.Normalize(MEAN, STD)])
 
-        if self.return_annotations:
+        if self.annotations:
             self.precondition_text = np.load(
-                f"{data_dir}/precondition_language_{data_split}.npy"
+                f"{data_dir}/precondition_language_{data_split}.npy", allow_pickle=True
             )
-            self.action_text = np.load(f"{data_dir}/action_language_{data_split}.npy")
+            self.action_text = np.load(
+                f"{data_dir}/action_language_{data_split}.npy", allow_pickle=True
+            )
             self.postcondition_text = np.load(
-                f"{data_dir}/postcondition_language_{data_split}.npy"
+                f"{data_dir}/postcondition_language_{data_split}.npy", allow_pickle=True
             )
+
+            # 3 annotators per example
+            assert self.precondition_text.shape[1] == 3
+            assert self.action_text.shape[1] == 3
+            assert self.postcondition_text.shape[1] == 3
 
     def __len__(self):
         return len(self.action_matrix)
@@ -66,9 +81,12 @@ class PigPenDataset(Dataset):
         action_vector = self.action_matrix[index]
         objects_vector = self.objects_matrix[index]
 
-        item = {"actions": action_vector, "objects": objects_vector}
+        item = {
+            "actions": torch.from_numpy(action_vector),
+            "objects": torch.from_numpy(objects_vector),
+        }
 
-        if self.return_images:
+        if self.images:
             image_0 = load_image_from_path(
                 f"{self.image_directory}/{self.image_indices[index]}/0.jpeg"
             )
@@ -82,10 +100,48 @@ class PigPenDataset(Dataset):
             # stack images
             item["images"] = torch.stack([image_0, image_1])
 
-        if self.return_annotations:
+        if self.annotations:
             # Loads raw text -> note that this is yet to be tokenized at this stage
-            item["precondition_text"] = self.precondition_text[index]
-            item["action_text"] = self.action_text[index]
-            item["postcondition_text"] = self.postcondition_text[index]
+            annotation_index = 0
+            if self.randomise_annotations:
+                annotation_index = random.randint(0, 2)
+
+            item["precondition_text"] = self.precondition_text[index][annotation_index]
+            item["action_text"] = self.action_text[index][annotation_index]
+            item["postcondition_text"] = self.postcondition_text[index][
+                annotation_index
+            ]
 
         return item
+
+
+def collate_fn_generator(
+    tokenizer: Optional[Tokenizer],
+) -> Callable[
+    [List[Dict[str, Union[str, torch.Tensor]]]],
+    Dict[str, Union[torch.Tensor, Dict[str, torch.Tensor]]],
+]:
+    """
+    Returns a collate function to be used with a dataloader
+    A collate function is where individual examples get collated into a batch
+    In most cases this is a simple stack, but in the case that we have a text input we must tokenize
+    and pad appropriately.
+    """
+
+    def collate_fn(
+        batch: List[Dict[str, Union[str, torch.Tensor]]]
+    ) -> Dict[str, torch.Tensor]:
+        items = {}
+        for key in batch[0].keys():
+            if "text" in key and tokenizer is not None:
+                items[key] = tokenizer(
+                    [batch_item[key] for batch_item in batch],
+                    padding=True,
+                    return_tensors="pt",
+                    truncation=True,
+                )
+            else:
+                items[key] = torch.stack([batch_item[key] for batch_item in batch])
+        return items
+
+    return collate_fn
