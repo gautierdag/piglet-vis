@@ -1,12 +1,14 @@
 import random
-from typing import Callable, List, Dict, Union, Optional
-from tokenizers import Tokenizer
-import torch
-from torch.utils.data import Dataset
-from typing import Callable, Literal, Optional
+from typing import Callable, Dict, List, Literal, Optional, Union
+
 import numpy as np
-from PIL import Image
+import pytorch_lightning as pl
+import torch
 import torchvision.transforms as transforms
+from PIL import Image
+from tokenizers import Tokenizer
+from torch.utils.data import DataLoader, Dataset
+from transformers import AutoTokenizer
 
 # Channel-wise pixel statistics collected over entire dataset
 MEAN = torch.tensor([0.49458119, 0.43375753, 0.34601003])
@@ -98,7 +100,7 @@ class PigPenDataset(Dataset):
             image_0 = self.transforms(image_0.permute(-1, 0, 1))
             image_1 = self.transforms(image_1.permute(-1, 0, 1))
             # stack images
-            item["images"] = torch.stack([image_0, image_1])
+            item["images"] = torch.stack([image_0, image_1]).float()
 
         if self.annotations:
             # Loads raw text -> note that this is yet to be tokenized at this stage
@@ -145,3 +147,90 @@ def collate_fn_generator(
         return items
 
     return collate_fn
+
+
+class PigPenDataModule(pl.LightningDataModule):
+    def __init__(
+        self,
+        data_dir: str = "../data",
+        batch_size: int = 32,
+        images=False,
+        annotations=False,
+        randomise_annotations=False,
+        bert_model: str = "roberta-base",
+        num_workers=4,
+    ):
+        super().__init__()
+        self.data_dir = data_dir
+        self.batch_size = batch_size
+        self.images = images
+        self.annotations = annotations
+        self.randomise_annotations = randomise_annotations
+        self.bert_model = bert_model
+        self.num_workers = num_workers
+
+    def setup(self, stage: Optional[str] = None):
+        """
+        Make assignments here (val/train/test split)
+        stage is a string for modes: fit/predict/validate/test
+        """
+        self.pigpen_train = PigPenDataset(
+            data_dir=self.data_dir,
+            data_split="train",
+            images=self.images,
+            annotations=self.annotations,
+            randomise_annotations=self.randomise_annotations,
+        )
+        self.pigpen_val = PigPenDataset(
+            data_dir=self.data_dir,
+            data_split="val",
+            images=self.images,
+            annotations=self.annotations,
+            randomise_annotations=self.randomise_annotations,
+        )
+        self.collate_fn = None
+        if self.annotations:
+            tokenizer = AutoTokenizer.from_pretrained(
+                self.bert_model,
+                cache_dir=f"output/bert-models/{self.bert_model}",
+                model_max_length=512,
+            )
+            self.collate_fn = collate_fn_generator(tokenizer)
+            self.pigpen_test = PigPenDataset(
+                data_dir=self.data_dir,
+                data_split="test",
+                images=self.images,
+                annotations=self.annotations,
+                randomise_annotations=self.randomise_annotations,
+            )
+
+    def train_dataloader(self):
+        return DataLoader(
+            self.pigpen_train,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=self.num_workers,
+            pin_memory=torch.cuda.is_available(),
+            collate_fn=self.collate_fn,
+        )
+
+    def val_dataloader(self):
+        return DataLoader(
+            self.pigpen_val,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
+            pin_memory=torch.cuda.is_available(),
+            collate_fn=self.collate_fn,
+        )
+
+    def test_dataloader(self):
+        assert self.annotations, "Test set not available without annotations"
+        return DataLoader(
+            self.pigpen_test,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
+            pin_memory=torch.cuda.is_available(),
+            collate_fn=self.collate_fn,
+        )

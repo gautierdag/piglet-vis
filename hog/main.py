@@ -1,15 +1,14 @@
 from argparse import ArgumentParser
 
-import torch
-from torch.utils.data import DataLoader
 import pytorch_lightning as pl
+
+
+from models.model import Piglet
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.utilities.seed import seed_everything
-from transformers import AutoTokenizer
 
-from dataset import PigPenDataset, collate_fn_generator
-from model import Piglet
+from dataset import PigPenDataModule
 
 
 def main(hparams):
@@ -25,23 +24,10 @@ def main(hparams):
     run_name = wandb_logger.experiment.name
 
     print("Loading dataset")
-    train_dataset = PigPenDataset(data_dir=hparams.input_dir, data_split="train")
-    val_dataset = PigPenDataset(data_dir=hparams.input_dir, data_split="val")
+    pigpen = PigPenDataModule(
+        data_dir=hparams.input_dir, batch_size=hparams.batch_size, images=True
+    )
 
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=hparams.batch_size,
-        shuffle=True,
-        num_workers=4,
-        pin_memory=torch.cuda.is_available(),
-    )
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=hparams.batch_size,
-        shuffle=False,
-        num_workers=4,
-        pin_memory=torch.cuda.is_available(),
-    )
     print("Creating Model")
     model = Piglet(
         reverse_object_mapping_dir=hparams.input_dir,
@@ -75,55 +61,20 @@ def main(hparams):
         )
 
     print("Training...")
-    trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=[val_loader])
+    trainer.fit(model, datamodule=pigpen)
 
-    # print("Loading Annotated Dataset")
-    # annotated_train_dataset = PigPenDataset(
-    #     data_dir=f"{hparams.input_dir}/annotated", data_split="train"
-    # )
-    # annotated_val_dataset = PigPenDataset(
-    #     data_dir=f"{hparams.input_dir}/annotated", data_split="val"
-    # )
-    # annotated_test_dataset = PigPenDataset(
-    #     data_dir=f"{hparams.input_dir}/annotated", data_split="test"
+    print("Loading Annotated Dataset")
+    # pigpen_annotated = PigPenDataModule(
+    #     data_dir=f"{hparams.input_dir}/annotated",
+    #     batch_size=hparams.batch_size,
+    #     annotations=True,
     # )
 
-    # tokenizer = AutoTokenizer.from_pretrained(
-    #     hparams.bert_model,
-    #     cache_dir=f"output/bert-models/{hparams.bert_model}",
-    #     model_max_length=512,
-    # )
-    # collate_fn = collate_fn_generator(tokenizer)
-
-    # annotated_train_loader = DataLoader(
-    #     annotated_train_dataset,
-    #     batch_size=64,
-    #     shuffle=True,
-    #     num_workers=4,
-    #     pin_memory=torch.cuda.is_available(),
-    #     collate_fn=collate_fn,
-    # )
-    # annotated_val_loader = DataLoader(
-    #     annotated_val_dataset,
-    #     batch_size=64,
-    #     shuffle=False,
-    #     num_workers=4,
-    #     pin_memory=torch.cuda.is_available(),
-    #     collate_fn=collate_fn,
-    # )
-    # annotated_test_loader = DataLoader(
-    #     annotated_test_dataset,
-    #     batch_size=64,
-    #     shuffle=False,
-    #     num_workers=4,
-    #     pin_memory=torch.cuda.is_available(),
-    #     collate_fn=collate_fn,
-    # )
-
-    # m = Piglet.load_from_checkpoint(
-    #     "/home/gautier/Desktop/hog/output/checkpoints/driven-jazz-49/epoch=19-step=9259.ckpt",
+    # annotations_model = Piglet.load_from_checkpoint(
+    #     checkpoint_callback.best_model_path,
     #     strict=False,
     #     symbolic_action=False,
+    #     learning_rate=0.00001,
     # )
 
 
@@ -142,7 +93,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--batch-size", default=8, type=int, help="batch size")
     parser.add_argument(
-        "--max-epochs", default=20, type=int, help="max number of training epochs"
+        "--max-epochs", default=2, type=int, help="max number of training epochs"
     )
     parser.add_argument(
         "--hidden-size", default=256, type=int, help="number of hidden units per layer"

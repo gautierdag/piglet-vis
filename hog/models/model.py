@@ -1,93 +1,17 @@
-import pickle
-from collections import OrderedDict
-from typing import Tuple
+from typing import Tuple, Optional
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 import pytorch_lightning as pl
-from transformers import AutoModel
+import torch
+import torch.nn.functional as F
 
-from object_attributes import OBJECT_ATTRIBUTES
-
-
-class PigletSymbolicActionEncoder(nn.Module):
-    def __init__(
-        self,
-        hidden_size=256,
-        num_layers=3,
-        dropout=0.1,
-        action_embedding_size=10,
-    ):
-        super().__init__()
-        self.hidden_size = hidden_size
-        self.num_layers = num_layers
-        self.dropout = dropout
-
-        # Action Encoder Model
-        self.action_embedding_layer = nn.Embedding(action_embedding_size, hidden_size)
-        action_encoder_layers = OrderedDict()
-        for l in range(num_layers):
-            action_encoder_layers[f"dropout_{l}"] = nn.Dropout(dropout)
-            action_encoder_layers[f"linear_{l}"] = nn.Linear(hidden_size, hidden_size)
-            action_encoder_layers[f"activation_{l}"] = nn.Tanh()
-        self.action_encoder = nn.Sequential(action_encoder_layers)
-
-    def forward(
-        self, action: torch.Tensor, action_args_embeddings: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Args:
-            action: [batch_size, 1]
-            action_args_embedding: [batch_size, hidden_size]
-        Returns:
-            h_a: [batch_size, hidden_size]
-        """
-
-        # embed the action vector
-        action_embedding = self.action_embedding_layer(action)
-        # combine with object representation of arguments
-        h_a = self.action_encoder(action_embedding + action_args_embeddings)
-
-        return h_a
-
-
-class PigletAnnotatedActionEncoder(nn.Module):
-    def __init__(
-        self,
-        hidden_size=256,
-        bert_model_name="roberta-base",
-        bert_model_dir="output/bert-models",
-    ):
-        super().__init__()
-        self.hidden_size = hidden_size
-        self.bert_model = AutoModel.from_pretrained(
-            bert_model_name,
-            cache_dir=f"{bert_model_dir}/{bert_model_name}",
-            add_pooling_layer=False,
-        )
-        self.output_layer = nn.Linear(self.bert_model.config.hidden_size, hidden_size)
-        self.activation = nn.Tanh()
-
-    def forward(
-        self,
-        action_text_input_ids: torch.Tensor,
-        action_text_attention_mask: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Args:
-            action_text_input_ids: [batch_size, N]
-            action_text_attention_mask: [batch_size, N]
-        Returns:
-            h_a: [batch_size, hidden_size]
-        """
-        bert_outputs = self.bert_model(
-            action_text_input_ids, attention_mask=action_text_attention_mask
-        )
-        # pass first token (cls token) of each action to output layer
-        h_a = self.output_layer(bert_outputs.last_hidden_state[:, 0, :])
-        h_a = self.activation(h_a)
-        return h_a
+from .action_models import (
+    PigletAnnotatedActionEncoder,
+    PigletSymbolicActionEncoder,
+    PigletActionApplyModel,
+)
+from .object_models import PigletObjectEncoder, PigletObjectDecoder
+from .image_encoder import PigletImageEncoder
+from .object_attributes import OBJECT_ATTRIBUTES
 
 
 class Piglet(pl.LightningModule):
@@ -106,6 +30,7 @@ class Piglet(pl.LightningModule):
         symbolic_action=True,
         bert_model_name="roberta-base",
         bert_model_dir="output/bert-models",
+        encode_images=True,
     ):
         """
         Args:
@@ -133,38 +58,22 @@ class Piglet(pl.LightningModule):
         self.symbolic_action = symbolic_action
         self.bert_model_name = bert_model_name
         self.bert_model_dir = bert_model_dir
-        self.activation = nn.Tanh()
+        self.encode_images = encode_images
 
         assert len(OBJECT_ATTRIBUTES) == self.num_attributes
 
-        # mask for embedding layer output -> based on position
-        # mask probability to 0 for other attributes when looking at a specific attribute
-        # This is needed because we are using a single embedding layer for all object attributes
-        reverse_object_mapper_path = (
-            f"{reverse_object_mapping_dir}/reverse_object_mapping.pkl"
-        )
-        with open(reverse_object_mapper_path, "rb") as f:
-            self.reverse_object_mapper = pickle.load(f)
-        indexes = torch.tensor(
-            [
-                (pos, index)
-                for pos, index_mapper in self.reverse_object_mapper.items()
-                for index, _ in index_mapper.items()
-            ]
-        )
-        mask_embedding_layer = torch.zeros((38, 329))
-        mask_embedding_layer[indexes[:, 0], indexes[:, 1]] = 1
-        self.register_buffer("mask_embedding_layer", mask_embedding_layer)
+        # Image encoder
+        self.image_encoder = PigletImageEncoder(hidden_size=hidden_size)
 
         # Object Encoder Model
-        self.object_embedding_layer = nn.Embedding(
-            object_embedding_size, hidden_size, padding_idx=none_object_index
-        )
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=hidden_size, nhead=num_heads, dropout=dropout, batch_first=True
-        )
-        self.object_encoder_transformer = nn.TransformerEncoder(
-            encoder_layer, num_layers=num_layers
+        self.object_encoder = PigletObjectEncoder(
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            num_heads=num_heads,
+            dropout=dropout,
+            object_embedding_size=object_embedding_size,
+            num_attributes=num_attributes,
+            none_object_index=none_object_index,
         )
 
         # Action Encoder Model
@@ -183,49 +92,42 @@ class Piglet(pl.LightningModule):
             )
 
         # Action Apply Model
-        self.fuse_action_object = nn.Linear(hidden_size * 3, hidden_size)
-        action_apply_layers = OrderedDict()
-        for l in range(num_layers):
-            action_apply_layers[f"dropout_{l}"] = nn.Dropout(dropout)
-            action_apply_layers[f"linear_{l}"] = nn.Linear(hidden_size, hidden_size)
-            action_apply_layers[f"activation_{l}"] = nn.Tanh()
-        self.action_apply_layers = nn.Sequential(action_apply_layers)
+        self.apply_action = PigletActionApplyModel(
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            dropout=dropout,
+            input_fuse_size=hidden_size * 3,
+        )
 
         # Object Decoder
-        decoder_layer = nn.TransformerDecoderLayer(
-            d_model=hidden_size, nhead=num_heads, dropout=dropout, batch_first=True
+        self.object_decoder = PigletObjectDecoder(
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            num_heads=num_heads,
+            dropout=dropout,
+            object_embedding_size=object_embedding_size,
+            num_attributes=num_attributes,
+            none_object_index=none_object_index,
+            reverse_object_mapping_dir=reverse_object_mapping_dir,
         )
-        self.object_decoder_transformer = nn.TransformerDecoder(
-            decoder_layer, num_layers=num_layers
-        )
-        self.object_decoder_output_layer = nn.Linear(hidden_size, object_embedding_size)
 
-    def forward(self, object_inputs, action_inputs, action_text_inputs=None):
-        # always four "objects" per example 2 before and 2 after
-        assert object_inputs.shape[1] == 4
-        # consitent number of object attributes
-        assert object_inputs.shape[2] == self.num_attributes
+    def forward(
+        self, object_inputs, action_inputs, action_text_inputs=None, image_inputs=None
+    ):
+        # check that image inputs are not passed if no image encoder and vice versa
+        assert (image_inputs is None) == (not self.encode_images)
 
         batch_size = object_inputs.shape[0]
 
-        # select only the pre action objects
-        object_inputs = object_inputs[:, [0, 1], :]
-
         # embed object vector
-        object_embeddings = self.object_embedding_layer(object_inputs).reshape(
-            -1, self.num_attributes, self.hidden_size
-        )
+        h_o, object_embeddings = self.object_encoder(object_inputs)
 
-        # process representation of objects
-        h_o = self.object_encoder_transformer(object_embeddings)
-
-        # we "pool" the model by simply taking the hidden state corresponding
-        # to the first token.
-        h_o = self.activation(h_o[:, 0])
+        if self.encode_images:
+            h_i = self.image_encoder(image_inputs)
 
         if self.symbolic_action:
             # sum the embedding of object targeted and its receptacle
-            action_args_embeddings = self.object_embedding_layer(
+            action_args_embeddings = self.object_encoder.object_embedding_layer(
                 action_inputs[:, 1:]
             ).sum(1)
             h_a = self.action_encoder(action_inputs[:, 0], action_args_embeddings)
@@ -234,25 +136,11 @@ class Piglet(pl.LightningModule):
                 action_text_inputs["input_ids"], action_text_inputs["attention_mask"]
             )
 
-        # concat the two encoded objects with encoded action
-        h_o_a = torch.concat((h_o.reshape(batch_size, -1), h_a), dim=1)
-
-        # apply action to objects
-        h_o_a = self.fuse_action_object(h_o_a)
-        h_o_a = self.action_apply_layers(h_o_a)
-        h_o_a = self.activation(h_o_a)
-
-        # expand the fused action/object_pre representation to apply to both objects
-        h_o_a = torch.repeat_interleave(h_o_a, (2), dim=0)
+        # apply action to object hidden representations
+        h_o_a = self.apply_action(h_o.reshape(batch_size, -1), h_a)
 
         # use transformer decoder and pass object_embeddings as src vector and h_o_a as the memory vector
-        h_o_post = self.object_decoder_transformer(
-            object_embeddings, h_o_a.reshape(batch_size * 2, 1, -1)
-        )
-        h_o_post = self.activation(h_o_post)
-
-        # map sequence to embedding dimension
-        h_o_post = self.object_decoder_output_layer(h_o_post)
+        h_o_post = self.object_decoder(h_o_a, object_embeddings)
 
         # returns predicted sequence of object attributes
         # torch.Size([batch_size*2, num_attributes, object_embedding_size])
@@ -264,7 +152,7 @@ class Piglet(pl.LightningModule):
 
         # mask the embedding layer output to only allow predictions for valid attributes at each position
         h_o_post = torch.where(
-            self.mask_embedding_layer == 1,
+            self.object_decoder.mask_embedding_layer == 1,
             h_o_post,
             torch.tensor(float("-inf"), device=self.device),
         )
@@ -293,6 +181,7 @@ class Piglet(pl.LightningModule):
     def training_step(self, batch, batch_idx) -> torch.tensor:
         objects = batch["objects"]
         actions = batch["actions"]
+        images = batch.get("images", None)
         action_text_inputs = batch.get("action_text", None)
 
         # the objects vector containst four dimensions (pre_0, pre_1, post_0, post_1)
@@ -300,7 +189,9 @@ class Piglet(pl.LightningModule):
         objects_labels_post = objects[:, [2, 3], :]
 
         # encode objects and actions, apply action, and predict resulting object attributes
-        h_o_post_ouput = self(objects, actions, action_text_inputs)
+        h_o_post_ouput = self(
+            objects, actions, action_text_inputs=action_text_inputs, image_inputs=images
+        )
 
         avg_loss, _ = self.calculate_object_attribute_loss_and_predictions(
             h_o_post_ouput, objects_labels_post
@@ -311,6 +202,7 @@ class Piglet(pl.LightningModule):
     def process_inference_batch(self, batch, split="val") -> None:
         objects = batch["objects"]
         actions = batch["actions"]
+        images = batch.get("images", None)
         action_text_inputs = batch.get("action_text", None)
 
         # the objects vector containst four dimensions (pre_0, pre_1, post_0, post_1)
@@ -320,7 +212,9 @@ class Piglet(pl.LightningModule):
         objects_labels_post = objects[:, [2, 3], :]
 
         # encode objects and actions, apply action, and predict resulting object attributes
-        h_o_post_ouput = self(objects, actions, action_text_inputs)
+        h_o_post_ouput = self(
+            objects, actions, action_text_inputs=action_text_inputs, image_inputs=images
+        )
 
         avg_loss, predictions = self.calculate_object_attribute_loss_and_predictions(
             h_o_post_ouput, objects_labels_post
