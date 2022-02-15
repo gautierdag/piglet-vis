@@ -1,8 +1,10 @@
-from typing import Tuple, Optional
+from typing import Tuple
+from collections import defaultdict
 
 import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
+from einops import rearrange
 
 from .action_models import (
     PigletAnnotatedActionEncoder,
@@ -10,8 +12,8 @@ from .action_models import (
     PigletActionApplyModel,
 )
 from .object_models import PigletObjectEncoder, PigletObjectDecoder
-from .image_encoder import PigletImageEncoder
-from .object_attributes import OBJECT_ATTRIBUTES
+from .image_models import PigletImageEncoder
+from .mappings import OBJECT_ATTRIBUTES, ACTIONS_MAPPER
 
 
 class Piglet(pl.LightningModule):
@@ -30,7 +32,7 @@ class Piglet(pl.LightningModule):
         symbolic_action=True,
         bert_model_name="roberta-base",
         bert_model_dir="output/bert-models",
-        encode_images=True,
+        encode_images=False,
     ):
         """
         Args:
@@ -123,7 +125,7 @@ class Piglet(pl.LightningModule):
         h_o, object_embeddings = self.object_encoder(object_inputs)
 
         if self.encode_images:
-            h_i = self.image_encoder(image_inputs)
+            h_o = self.image_encoder(image_inputs)
 
         if self.symbolic_action:
             # sum the embedding of object targeted and its receptacle
@@ -151,11 +153,7 @@ class Piglet(pl.LightningModule):
     ) -> Tuple[torch.Tensor, torch.Tensor]:
 
         # mask the embedding layer output to only allow predictions for valid attributes at each position
-        h_o_post = torch.where(
-            self.object_decoder.mask_embedding_layer == 1,
-            h_o_post,
-            torch.tensor(float("-inf"), device=self.device),
-        )
+        h_o_post = self.object_decoder.mask_output_probabilities(h_o_post)
 
         loss = F.cross_entropy(
             h_o_post.reshape(-1, self.object_embedding_size),
@@ -166,8 +164,8 @@ class Piglet(pl.LightningModule):
         none_mask = torch.ones_like(objects_labels_post)
         # first column of the object vector is the indexed (name) of the object
         # if index == self.none_object_index then the object is not present
-        none_mask *= (objects_labels_post[:, :, 0] != self.none_object_index).unsqueeze(
-            2
+        none_mask *= rearrange(
+            objects_labels_post[:, :, 0] != self.none_object_index, "b o -> b o 1"
         )
 
         # average over actual objects (not none objects)
@@ -184,7 +182,7 @@ class Piglet(pl.LightningModule):
         images = batch.get("images", None)
         action_text_inputs = batch.get("action_text", None)
 
-        # the objects vector containst four dimensions (pre_0, pre_1, post_0, post_1)
+        # the objects vector contains four dimensions (pre_0, pre_1, post_0, post_1)
         # here we select the labels for both objects post action
         objects_labels_post = objects[:, [2, 3], :]
 
@@ -220,50 +218,51 @@ class Piglet(pl.LightningModule):
             h_o_post_ouput, objects_labels_post
         )
         self.log(f"{split}/loss", avg_loss)
-        return (predictions.cpu(), objects_labels_pre.cpu(), objects_labels_post.cpu())
+        return (
+            predictions.cpu(),
+            objects_labels_pre.cpu(),
+            objects_labels_post.cpu(),
+            actions.cpu(),
+        )
 
     def calculate_epoch_end_statistics(self, step_outputs, split="val") -> None:
 
         """
         Calculate epoch statistics (accuracy) over entire validation set
+        Multiple types of accuracy are calculated:
+            - average accuracy over all objects and attributes
+            - average accuracy over changing attributes only
+            - average accuracy per attribute
+            - average accuracy per action
+        For all accuracies we exclude none objects from the calculation
         """
-        object_attribute_predictions_post = []
-        object_attribute_labels_pre = []
-        object_attribute_labels_post = []
-        for (preds, labels_pre, labels_pro) in step_outputs:
-            object_attribute_predictions_post.append(preds)
-            object_attribute_labels_pre.append(labels_pre)
-            object_attribute_labels_post.append(labels_pro)
-
-        # concat all predictions and labels into 2D tensors
-        object_attribute_predictions_post = torch.concat(
-            object_attribute_predictions_post, dim=0
-        )
-        object_attribute_labels_pre = torch.concat(
-            object_attribute_labels_pre, dim=0
-        ).reshape(-1, self.num_attributes)
-        object_attribute_labels_post = torch.concat(
-            object_attribute_labels_post, dim=0
-        ).reshape(-1, self.num_attributes)
-
-        # ignore where label of object is none_object_index
-        object_attribute_predictions_post = object_attribute_predictions_post[
-            object_attribute_labels_pre[:, 0] != self.none_object_index
+        output_names = [
+            "predictions",
+            "objects_labels_pre",
+            "objects_labels_post",
+            "actions",
         ]
-        object_attribute_labels_pre = object_attribute_labels_pre[
-            object_attribute_labels_pre[:, 0] != self.none_object_index
-        ]
-        object_attribute_labels_post = object_attribute_labels_post[
-            object_attribute_labels_post[:, 0] != self.none_object_index
-        ]
+        outputs = defaultdict(list)
+        for step_output in step_outputs:
+            for output_name, step_output in zip(output_names, step_output):
+                outputs[output_name] += step_output
 
-        n = object_attribute_predictions_post.shape[0]
+        # concat batches into tensors of shape (num_batches*num_objects, num_attributes)
+        for output_name in output_names:
+            outputs[output_name] = torch.concat(outputs[output_name], dim=0).reshape(
+                -1, outputs[output_name][0].shape[-1]
+            )
+        # ignore None objects - ignore where label of object is none_object_index
+        ignore_mask = outputs["objects_labels_pre"][:, 0] != self.none_object_index
 
         # accuracy when every attribute is guessed correctly
+        num_objects = ignore_mask.shape[0]
         average_accuracy = (
-            (object_attribute_predictions_post == object_attribute_labels_post).sum(1)
+            (outputs["predictions"] == outputs["objects_labels_post"]).sum(1)[
+                ignore_mask
+            ]
             == self.num_attributes
-        ).sum() / n
+        ).sum() / num_objects
         self.log(
             f"{split}/accuracy/average_accuracy",
             average_accuracy,
@@ -271,8 +270,8 @@ class Piglet(pl.LightningModule):
 
         # calculate accuracy per attribute
         average_attribute_accuracy = (
-            object_attribute_predictions_post == object_attribute_labels_post
-        ).sum(0) / n
+            outputs["predictions"] == outputs["objects_labels_post"]
+        )[ignore_mask].sum(0) / num_objects
         # log accuracy per attribute
         for acc, object_attribute_name in zip(
             average_attribute_accuracy, OBJECT_ATTRIBUTES
@@ -283,15 +282,44 @@ class Piglet(pl.LightningModule):
             f"{split}/accuracy/average_attribute_accuracy",
             average_attribute_accuracy.mean(),
         )
+
         # log accuracy of attributes that have changed
-        diff = object_attribute_labels_post != object_attribute_labels_pre
+        diff = outputs["objects_labels_post"] != outputs["objects_labels_pre"]
         diff_accuracy = 0
         if diff.sum() > 0:
             diff_accuracy = (
-                object_attribute_predictions_post[diff]
-                == object_attribute_labels_post[diff]
+                outputs["predictions"][diff] == outputs["objects_labels_post"][diff]
             ).sum() / diff.sum()
         self.log(f"{split}/accuracy/diff_accuracy", diff_accuracy)
+
+        # log accuracy of actions
+        num_examples = outputs["actions"].shape[0]
+        for action_index, action_name in ACTIONS_MAPPER.items():
+            action_mask = outputs["actions"][:, 0] == action_index
+            num_examples_with_action = action_mask.sum()
+            if num_examples_with_action > 0:
+                preds = (
+                    outputs["predictions"]
+                    .reshape(num_examples, 2, -1)[action_mask]
+                    .reshape(num_examples_with_action * 2, -1)
+                )
+                labels = (
+                    outputs["objects_labels_post"]
+                    .reshape(num_examples, 2, -1)[action_mask]
+                    .reshape(num_examples_with_action * 2, -1)
+                )
+                ignore_mask = labels[:, 0] != self.none_object_index
+                n = ignore_mask.sum()
+                action_accuracy = (
+                    (preds[ignore_mask] == labels[ignore_mask]).sum(1)
+                    == self.num_attributes
+                ).sum() / n
+            else:
+                action_accuracy = torch.tensor(0, dtype=float)
+
+            self.log(
+                f"{split}/accuracy/action_level/{action_name}_accuracy", action_accuracy
+            )
 
     def validation_step(self, batch, batch_idx) -> None:
         return self.process_inference_batch(batch, split="val")

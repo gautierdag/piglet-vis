@@ -25,7 +25,7 @@ def main(hparams):
 
     print("Loading dataset")
     pigpen = PigPenDataModule(
-        data_dir=hparams.input_dir, batch_size=hparams.batch_size, images=True
+        data_dir=hparams.input_dir, batch_size=hparams.batch_size, images=False
     )
 
     print("Creating Model")

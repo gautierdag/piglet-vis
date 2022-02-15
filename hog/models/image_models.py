@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torchvision
+from einops import rearrange
 
 
 class PigletImageEncoder(nn.Module):
@@ -28,10 +29,7 @@ class PigletImageEncoder(nn.Module):
         Returns:
             h_i: [batch_size*2, hidden_size]
         """
-        assert images.shape[1] == 2  # two images per example
-        assert images.shape[2] == 3  # RGB
-        batch_size, num_images, num_channels, width, height = images.shape
+        # reshape images to [batch_size*2, C, W, H]
+        image_inputs = rearrange(images, "b n c w h -> (b n) c w h", c=3, n=2)
 
-        return self.backbone_model(
-            images.reshape(batch_size * num_images, num_channels, width, height)
-        )
+        return self.backbone_model(image_inputs)

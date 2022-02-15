@@ -3,6 +3,7 @@ import pickle
 
 import torch
 import torch.nn as nn
+from einops import repeat, rearrange
 
 
 class PigletObjectEncoder(nn.Module):
@@ -54,8 +55,14 @@ class PigletObjectEncoder(nn.Module):
         object_inputs = object_inputs[:, [0, 1], :]
 
         # embed object vector
-        object_embeddings = self.object_embedding_layer(object_inputs).reshape(
-            -1, self.num_attributes, self.hidden_size
+        object_embeddings = self.object_embedding_layer(object_inputs)
+
+        # reshape object_embeddings to [batch_size*2, num_attributes, hidden_size]
+        object_embeddings = rearrange(
+            object_embeddings,
+            "b o a h -> (b o) a h",
+            a=self.num_attributes,
+            h=self.hidden_size,
         )
 
         # process representation of objects
@@ -128,19 +135,28 @@ class PigletObjectDecoder(nn.Module):
         Returns:
             h_a: [batch_size, hidden_size]
         """
-
-        batch_size = h_o_a.shape[0]
-
         # expand the fused action/object_pre representation to apply to both objects
-        h_o_a = torch.repeat_interleave(h_o_a, (2), dim=0)
+        h_o_a = repeat(h_o_a, "b h -> (b 2) 1 h")
 
         # use transformer decoder and pass object_embeddings as src vector and h_o_a as the memory vector
-        h_o_post = self.object_decoder_transformer(
-            object_embeddings, h_o_a.reshape(batch_size * 2, 1, -1)
-        )
+        h_o_post = self.object_decoder_transformer(object_embeddings, h_o_a)
         h_o_post = self.activation(h_o_post)
 
         # map sequence to embedding dimension
         h_o_post = self.object_decoder_output_layer(h_o_post)
 
+        return h_o_post
+
+    def mask_output_probabilities(self, h_o_post: torch.Tensor) -> torch.Tensor:
+        """
+        Since we use a single embedding matrix for all attributes we need to mask the output probabilities
+        of the embedding layer to -inf for all unnattainable attributes at given position.
+        """
+
+        # mask the embedding layer output to only allow predictions for valid attributes at each position
+        h_o_post = torch.where(
+            self.mask_embedding_layer == 1,
+            h_o_post,
+            torch.tensor(float("-inf"), device=self.mask_embedding_layer.device),
+        )
         return h_o_post

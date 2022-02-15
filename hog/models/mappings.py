@@ -38,3 +38,17 @@ OBJECT_ATTRIBUTES = [
     "sliceable",
     "toggleable",
 ]
+
+
+ACTIONS_MAPPER = {
+    0: "DirtyObject",
+    1: "OpenObject",
+    2: "SliceObject",
+    3: "ToggleObjectOff",
+    4: "ToggleObjectOn",
+    5: "EmptyLiquidFromObject",
+    6: "PickupObject",
+    7: "HeatUpPan",
+    8: "CloseObject",
+    9: "PutObject",
+}
