@@ -4,3 +4,5 @@ pytorch-lightning
 numpy
 wandb
 black
+timm
+hydra
