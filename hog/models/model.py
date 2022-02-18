@@ -1,5 +1,5 @@
-from typing import Tuple
 from collections import defaultdict
+from typing import Tuple
 
 import pytorch_lightning as pl
 import torch
@@ -7,13 +7,13 @@ import torch.nn.functional as F
 from einops import rearrange
 
 from .action_models import (
+    PigletActionApplyModel,
     PigletAnnotatedActionEncoder,
     PigletSymbolicActionEncoder,
-    PigletActionApplyModel,
 )
-from .object_models import PigletObjectEncoder, PigletObjectDecoder
 from .image_models import PigletImageEncoder
-from .mappings import OBJECT_ATTRIBUTES, ACTIONS_MAPPER
+from .mappings import ACTIONS_MAPPER, OBJECT_ATTRIBUTES
+from .object_models import PigletObjectDecoder, PigletObjectEncoder
 
 
 class Piglet(pl.LightningModule):
@@ -65,7 +65,8 @@ class Piglet(pl.LightningModule):
         assert len(OBJECT_ATTRIBUTES) == self.num_attributes
 
         # Image encoder
-        self.image_encoder = PigletImageEncoder(hidden_size=hidden_size)
+        if self.encode_images:
+            self.image_encoder = PigletImageEncoder(hidden_size=hidden_size)
 
         # Object Encoder Model
         self.object_encoder = PigletObjectEncoder(

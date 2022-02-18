@@ -4,11 +4,13 @@ from typing import Callable, Dict, List, Literal, Optional, Union
 import numpy as np
 import pytorch_lightning as pl
 import torch
-import torchvision.transforms as transforms
+from einops import rearrange
 from PIL import Image
 from tokenizers import Tokenizer
 from torch.utils.data import DataLoader, Dataset
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, DetrFeatureExtractor
+
+PigPenExample = Dict[str, Union[str, torch.Tensor]]
 
 # Channel-wise pixel statistics collected over entire dataset
 MEAN = torch.tensor([0.49458119, 0.43375753, 0.34601003])
@@ -22,7 +24,7 @@ def denormalize_image(image):
 
 
 def load_image_from_path(path: str) -> torch.Tensor:
-    return torch.from_numpy(np.asarray(Image.open(path)) / 255.0)
+    return torch.from_numpy(np.asarray(Image.open(path)) / 255.0).float()
 
 
 class PigPenDataset(Dataset):
@@ -57,8 +59,7 @@ class PigPenDataset(Dataset):
             self.image_directory = f"{data_dir}/{data_split}"
 
             self.image_indices = np.load(image_indices_file)
-            assert len(self.action_matrix) == len(self.action_matrix)
-            self.transforms = transforms.Compose([transforms.Normalize(MEAN, STD)])
+            assert len(self.action_matrix) == len(self.image_indices)
 
         if self.annotations:
             self.precondition_text = np.load(
@@ -79,11 +80,11 @@ class PigPenDataset(Dataset):
     def __len__(self):
         return len(self.action_matrix)
 
-    def __getitem__(self, index: int):
+    def __getitem__(self, index: int) -> PigPenExample:
         action_vector = self.action_matrix[index]
         objects_vector = self.objects_matrix[index]
 
-        item = {
+        item: PigPenExample = {
             "actions": torch.from_numpy(action_vector),
             "objects": torch.from_numpy(objects_vector),
         }
@@ -95,12 +96,10 @@ class PigPenDataset(Dataset):
             image_1 = load_image_from_path(
                 f"{self.image_directory}/{self.image_indices[index]}/1.jpeg"
             )
-
-            # Permute for channel first then normalize
-            image_0 = self.transforms(image_0.permute(-1, 0, 1))
-            image_1 = self.transforms(image_1.permute(-1, 0, 1))
             # stack images
-            item["images"] = torch.stack([image_0, image_1]).float()
+            images = torch.stack([image_0, image_1])
+            images = rearrange(images, "i h w c -> i c h w", c=3)
+            item["images"] = images
 
         if self.annotations:
             # Loads raw text -> note that this is yet to be tokenized at this stage
@@ -118,12 +117,22 @@ class PigPenDataset(Dataset):
 
 
 def collate_fn_generator(
-    tokenizer: Optional[Tokenizer],
+    tokenizer: Optional[Tokenizer] = None,
+    image_feature_extractor: Optional[
+        Callable[[List[torch.Tensor]], Dict[str, torch.Tensor]]
+    ] = None,
 ) -> Callable[
-    [List[Dict[str, Union[str, torch.Tensor]]]],
+    [List[PigPenExample]],
     Dict[str, Union[torch.Tensor, Dict[str, torch.Tensor]]],
 ]:
     """
+    Args:
+        tokenizer: tokenizer to use for text
+        image_feature_extractor: image feature extractor to use for images
+                                 note this is what huggingface uses to denote
+                                 the transformation and preparation step before the image
+                                 is passed to the vision model
+
     Returns a collate function to be used with a dataloader
     A collate function is where individual examples get collated into a batch
     In most cases this is a simple stack, but in the case that we have a text input we must tokenize
@@ -131,9 +140,9 @@ def collate_fn_generator(
     """
 
     def collate_fn(
-        batch: List[Dict[str, Union[str, torch.Tensor]]]
-    ) -> Dict[str, torch.Tensor]:
-        items = {}
+        batch: List[PigPenExample],
+    ) -> Dict[str, Union[torch.Tensor, Dict[str, torch.Tensor]]]:
+        items: Dict[str, Union[torch.Tensor, Dict[str, torch.Tensor]]] = {}
         for key in batch[0].keys():
             if "text" in key and tokenizer is not None:
                 items[key] = tokenizer(
@@ -142,8 +151,15 @@ def collate_fn_generator(
                     return_tensors="pt",
                     truncation=True,
                 )
+            if "images" in key and image_feature_extractor is not None:
+                images = torch.stack([batch_item[key] for batch_item in batch])
+                images = rearrange(images, "b i c h w -> (b i) c h w", c=3, i=2)
+                items[key] = image_feature_extractor(list(images), return_tensors="pt")[
+                    "pixel_values"
+                ]
             else:
                 items[key] = torch.stack([batch_item[key] for batch_item in batch])
+
         return items
 
     return collate_fn
@@ -158,6 +174,7 @@ class PigPenDataModule(pl.LightningDataModule):
         annotations=False,
         randomise_annotations=False,
         bert_model: str = "roberta-base",
+        vision_model: str = "detr",
         num_workers=4,
     ):
         super().__init__()
@@ -167,6 +184,7 @@ class PigPenDataModule(pl.LightningDataModule):
         self.annotations = annotations
         self.randomise_annotations = randomise_annotations
         self.bert_model = bert_model
+        self.vision_model = vision_model
         self.num_workers = num_workers
 
     def setup(self, stage: Optional[str] = None):
@@ -189,13 +207,16 @@ class PigPenDataModule(pl.LightningDataModule):
             randomise_annotations=self.randomise_annotations,
         )
         self.collate_fn = None
+        tokenizer = None
+        image_feature_extractor = None
+        # if using annotations then we will need to tokenize the text
+        # and it also means that we have access to a test split
         if self.annotations:
             tokenizer = AutoTokenizer.from_pretrained(
                 self.bert_model,
                 cache_dir=f"output/bert-models/{self.bert_model}",
                 model_max_length=512,
             )
-            self.collate_fn = collate_fn_generator(tokenizer)
             self.pigpen_test = PigPenDataset(
                 data_dir=self.data_dir,
                 data_split="test",
@@ -203,6 +224,20 @@ class PigPenDataModule(pl.LightningDataModule):
                 annotations=self.annotations,
                 randomise_annotations=self.randomise_annotations,
             )
+
+        # if using vision then we need the transform and load operation to apply to images
+        if self.images:
+            if self.vision_model == "detr":
+                image_feature_extractor = DetrFeatureExtractor.from_pretrained(
+                    "facebook/detr-resnet-50",
+                    cache_dir=f"output/vision_model/detr",
+                    do_resize=False,
+                )
+            else:
+                raise NotImplemented(f"Image model {self.vision_model} not implemented")
+
+        if tokenizer is not None or image_feature_extractor is not None:
+            self.collate_fn = collate_fn_generator(tokenizer)
 
     def train_dataloader(self):
         return DataLoader(

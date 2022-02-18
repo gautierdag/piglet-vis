@@ -1,9 +1,9 @@
-from typing import Tuple
 import pickle
+from typing import Tuple
 
 import torch
 import torch.nn as nn
-from einops import repeat, rearrange
+from einops import rearrange, repeat
 
 
 class PigletObjectEncoder(nn.Module):
