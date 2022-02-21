@@ -63,6 +63,7 @@ def main(cfg: HogConfig)->None:
 
     print("Training...")
     trainer.fit(model, datamodule=pigpen)
+    wandb_logger.finalize("finished")
 
     print("Loading NLU Task..")
 

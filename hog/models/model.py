@@ -152,6 +152,26 @@ class Piglet(pl.LightningModule):
         # torch.Size([batch_size*2, num_attributes, object_embedding_size])
         return h_o_post
 
+    def calculate_avg_object_loss(
+        self, objects: torch.Tensor, labels: torch.Tensor, eps=1e-12
+    ) -> torch.Tensor:
+        """
+        Args:
+            objects: float tensor of dims [batch_size, num_attributes, object_embedding_size]
+            labels: long tensor of dims [batch_size, num_attributes]
+        """
+        loss = F.cross_entropy(
+            objects.reshape(-1, self.object_embedding_size),
+            labels.flatten(),
+            reduction="none",
+        )
+        # first column of the object vector is the indexed (name) of the object
+        # if index == self.none_object_index then the object is not present
+        none_mask = torch.ones_like(labels)
+        none_mask *= (labels[:, 0] != self.none_object_index).unsqueeze(-1)
+        avg_loss = (loss * none_mask.flatten()).sum() / (none_mask.sum() + eps)
+        return avg_loss
+
     def calculate_object_attribute_loss_and_predictions(
         self, h_o_post, objects_labels_post
     ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -159,24 +179,33 @@ class Piglet(pl.LightningModule):
         # mask the embedding layer output to only allow predictions for valid attributes at each position
         h_o_post = self.object_decoder.mask_output_probabilities(h_o_post)
 
-        loss = F.cross_entropy(
-            h_o_post.reshape(-1, self.object_embedding_size),
-            objects_labels_post.flatten(),
-            reduction="none",
-        )
+        # select the two objects of each example separately
+        h_o_post = rearrange(h_o_post, "(b n) a o -> b n a o", n=2)
+        objects_0 = h_o_post[:, 0, :, :]
+        objects_1 = h_o_post[:, 1, :, :]
+        objects_0_labels = objects_labels_post[:, 0, :]
+        objects_1_labels = objects_labels_post[:, 1, :]
 
-        none_mask = torch.ones_like(objects_labels_post)
-        # first column of the object vector is the indexed (name) of the object
-        # if index == self.none_object_index then the object is not present
-        none_mask *= rearrange(
-            objects_labels_post[:, :, 0] != self.none_object_index, "b o -> b o 1"
-        )
+        # calculate loss for each object (since it is a set we evaluate over both possibilities object 0 -> object label 0)
+        loss_0_1 = (
+            self.calculate_avg_object_loss(objects_0, objects_0_labels)
+            + self.calculate_avg_object_loss(objects_1, objects_1_labels)
+        ) / 2.0
+        loss_1_0 = (
+            self.calculate_avg_object_loss(objects_1, objects_0_labels)
+            + self.calculate_avg_object_loss(objects_0, objects_1_labels)
+        ) / 2.0
 
-        # average over actual objects (not none objects)
-        avg_loss = (loss * none_mask.flatten()).sum() / (none_mask.sum() + 1e-12)
+        if loss_0_1 < loss_1_0:
+            avg_loss = loss_0_1
+            # get top 1 prediction for each object attribute
+            predictions = h_o_post.argmax(-1)
+        else:
+            avg_loss = loss_1_0
+            # predictions should be reversed for each object
+            predictions = torch.stack([objects_1, objects_0], dim=1).argmax(-1)
 
-        # get top 1 prediction for each object attribute
-        predictions = h_o_post.argmax(2)
+        predictions = rearrange(predictions, "b n p -> (b n) p", n=2)
 
         return avg_loss, predictions
 
@@ -194,7 +223,6 @@ class Piglet(pl.LightningModule):
         h_o_post_ouput = self(
             objects, actions, action_text_inputs=action_text_inputs, image_inputs=images
         )
-
         avg_loss, _ = self.calculate_object_attribute_loss_and_predictions(
             h_o_post_ouput, objects_labels_post
         )
@@ -277,10 +305,7 @@ class Piglet(pl.LightningModule):
             ]
             == self.num_attributes
         ).sum() / num_objects
-        self.log(
-            f"{split}/accuracy/average_accuracy",
-            average_accuracy,
-        )
+        self.log(f"{split}/accuracy/average_accuracy", average_accuracy, prog_bar=True)
 
         # calculate accuracy per attribute
         average_attribute_accuracy = (
