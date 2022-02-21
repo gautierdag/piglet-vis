@@ -86,8 +86,15 @@ class PigletImageEncoder(nn.Module):
     def forward(
         self, images: torch.Tensor, training=True
     ) -> Union[
-        torch.Tensor,
-        Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+        Tuple[torch.Tensor, torch.Tensor],
+        Tuple[
+            torch.Tensor,
+            torch.Tensor,
+            torch.Tensor,
+            torch.Tensor,
+            torch.Tensor,
+            torch.Tensor,
+        ],
     ]:
         """
         Args:
@@ -125,7 +132,7 @@ class PigletImageEncoder(nn.Module):
         # filter out low confidence bounding boxes based on threshold
         # scores =  (bbox_scores * self.K).softmax(-1)  + probas.max(-1).values
         scores = bbox_scores
-        print(scores[0])
+        # print(scores[0])
 
         # select the top num_objects bounding boxes based on scores
         indices = torch.topk(scores, k=self.num_objects)[1]
@@ -138,7 +145,12 @@ class PigletImageEncoder(nn.Module):
         # map to lower dimension
         h_i = self.fc(h_i)
 
-        if training:
-            return h_i
+        # separate the pre action and post action images across a dimension
+        h_i = rearrange(h_i, "(b i) o h -> b i o h", o=self.num_objects, i=2)
 
-        return (h_i, probas, bboxes, indices, diff_images)
+        h_i_pre_action = h_i[:, 0]
+        h_i_post_action = h_i[:, 1]
+        if training:
+            return h_i_pre_action, h_i_post_action
+
+        return (h_i_pre_action, h_i_post_action, probas, bboxes, indices, diff_images)

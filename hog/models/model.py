@@ -1,9 +1,13 @@
 from collections import defaultdict
-from typing import Tuple
+from typing import Dict, Tuple
 
+import matplotlib.pyplot as plt
+import numpy as np
 import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
+import torchvision
+from dataset import denormalize_image
 from einops import rearrange
 
 from .action_models import (
@@ -118,7 +122,12 @@ class Piglet(pl.LightningModule):
         self.object_idx_to_name = get_objects_mapper(data_dir_path)
 
     def forward(
-        self, object_inputs, action_inputs, action_text_inputs=None, image_inputs=None
+        self,
+        object_inputs,
+        action_inputs,
+        action_text_inputs=None,
+        image_inputs=None,
+        training=True,
     ):
         # check that image inputs are not passed if no image encoder and vice versa
         assert (image_inputs is None) == (not self.encode_images)
@@ -129,7 +138,8 @@ class Piglet(pl.LightningModule):
         h_o, object_embeddings = self.object_encoder(object_inputs)
 
         if self.encode_images:
-            h_o = self.image_encoder(image_inputs)
+            image_model_outputs = self.image_encoder(image_inputs, training=training)
+            h_o = image_model_outputs[0]
 
         if self.pretrain:
             # sum the embedding of object targeted and its receptacle
@@ -150,6 +160,9 @@ class Piglet(pl.LightningModule):
 
         # returns predicted sequence of object attributes
         # torch.Size([batch_size*2, num_attributes, object_embedding_size])
+        if self.encode_images and not training:
+            return h_o_post, image_model_outputs
+
         return h_o_post
 
     def calculate_avg_object_loss(
@@ -229,9 +242,7 @@ class Piglet(pl.LightningModule):
         self.log("train/loss", avg_loss)
         return avg_loss
 
-    def process_inference_batch(
-        self, batch, split="val"
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def process_inference_batch(self, batch, split="val") -> Dict[str, torch.Tensor]:
         """
         Process a batch of data for inference.
         Returns a tuple of:
@@ -252,20 +263,38 @@ class Piglet(pl.LightningModule):
         objects_labels_post = objects[:, [2, 3], :]
 
         # encode objects and actions, apply action, and predict resulting object attributes
-        h_o_post_ouput = self(
-            objects, actions, action_text_inputs=action_text_inputs, image_inputs=images
-        )
+        if images is not None:
+            h_o_post_ouput, image_outputs = self(
+                objects,
+                actions,
+                action_text_inputs=action_text_inputs,
+                image_inputs=images,
+                training=False,
+            )
+        else:
+            h_o_post_ouput = self(
+                objects, actions, action_text_inputs=action_text_inputs
+            )
 
         avg_loss, predictions = self.calculate_object_attribute_loss_and_predictions(
             h_o_post_ouput, objects_labels_post
         )
         self.log(f"{split}/loss", avg_loss)
-        return (
-            predictions.cpu(),
-            objects_labels_pre.cpu(),
-            objects_labels_post.cpu(),
-            actions.cpu(),
-        )
+        results: Dict[str, torch.Tensor] = {
+            "predictions": predictions.cpu(),
+            "objects_labels_pre": objects_labels_pre.cpu(),
+            "objects_labels_post": objects_labels_post.cpu(),
+            "actions": actions.cpu(),
+        }
+
+        if images is not None:
+            results["images"] = images.cpu()
+            results["image_probas"] = image_outputs[2].cpu()
+            results["image_bboxes"] = image_outputs[3].cpu()
+            results["image_indices"] = image_outputs[4].cpu()
+            results["image_diff"] = image_outputs[5].cpu()
+
+        return results
 
     def calculate_epoch_end_statistics(self, step_outputs, split="val") -> None:
 
@@ -278,22 +307,22 @@ class Piglet(pl.LightningModule):
             - average accuracy per action
         For all accuracies we exclude none objects from the calculation
         """
-        output_names = [
-            "predictions",
-            "objects_labels_pre",
-            "objects_labels_post",
-            "actions",
-        ]
+
         outputs = defaultdict(list)
         for step_output in step_outputs:
-            for output_name, step_output in zip(output_names, step_output):
+            for output_name, step_output in step_output.items():
                 outputs[output_name] += step_output
 
-        # concat batches into tensors of shape (num_batches*num_objects, num_attributes)
-        for output_name in output_names:
-            outputs[output_name] = torch.concat(outputs[output_name], dim=0).reshape(
-                -1, outputs[output_name][0].shape[-1]
-            )
+        for output_name in outputs.keys():
+            if "image" in output_name:
+                # only care about a single batch of images
+                outputs[output_name] = step_outputs[0][output_name]
+            else:
+                # concat batches into tensors of shape (num_batches*num_objects, num_attributes)
+                outputs[output_name] = torch.concat(
+                    outputs[output_name], dim=0
+                ).reshape(-1, outputs[output_name][0].shape[-1])
+
         # ignore None objects - ignore where label of object is none_object_index
         ignore_mask = outputs["objects_labels_pre"][:, 0] != self.none_object_index
 
@@ -359,6 +388,106 @@ class Piglet(pl.LightningModule):
             self.log(
                 f"{split}/accuracy/action_level/{action_name}_accuracy", action_accuracy
             )
+
+            if "images" in outputs:
+                self.plot_images(outputs)
+
+    def plot_images(
+        self,
+        outputs: Dict[str, torch.Tensor],
+        num_images: int = 4,
+    ) -> None:
+        images = outputs["images"]
+        bboxes = outputs["image_bboxes"]
+        indices = outputs["image_indices"]
+        probas = outputs["image_probas"]
+        diff = outputs["image_diff"]
+
+        plots = []
+        labels = []
+        for i in range(num_images):
+            plt.clf()
+            fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(32, 20))
+            im_before = torchvision.utils.draw_bounding_boxes(
+                (denormalize_image(images[i]) * 255).type(torch.uint8),
+                bboxes[i, indices[i].flatten(), :],
+                width=5,
+            )
+            max_ps, argmax_ps = probas[i].max(1)
+            labels_before = [
+                f"{self.image_encoder.image_model.config.id2label[m.item()]}: {p:0.2f}"
+                for m, p in zip(argmax_ps, max_ps)
+            ]
+            for j in indices[i]:
+                text = labels_before[j]
+                xmin = bboxes[i, j, 0]
+                ymin = bboxes[i, j, 1]
+                ax1.text(
+                    xmin,
+                    ymin,
+                    text,
+                    fontsize=15,
+                    bbox=dict(facecolor="yellow", alpha=0.5),
+                )
+            ax1.imshow(im_before.permute(1, 2, 0))
+            ax1.set_axis_off()
+
+            action_text = self.action_idx_to_name[
+                outputs["actions"][int(i / 2)][0].item()
+            ]
+            action_object = self.object_idx_to_name[
+                outputs["actions"][int(i / 2)][1].item()
+            ]
+            action_receptacle = self.object_idx_to_name[
+                outputs["actions"][int(i / 2)][2].item()
+            ]
+
+            object_1 = self.object_idx_to_name[
+                outputs["objects_labels_pre"][i][0].item()
+            ]
+            object_2 = self.object_idx_to_name[
+                outputs["objects_labels_pre"][i + 1][0].item()
+            ]
+            title = f"Effects of {action_text}({action_object}, {action_receptacle}) on ({object_1},{object_2})"
+
+            ax2.imshow(diff[i].permute(1, 2, 0))
+            ax2.set_axis_off()
+            ax2.set_title(title, fontsize=24)
+
+            im_after = torchvision.utils.draw_bounding_boxes(
+                (denormalize_image(images[i + 1]) * 255).type(torch.uint8),
+                bboxes[i + 1, indices[i + 1].flatten(), :],
+                width=5,
+            )
+            max_ps, argmax_ps = probas[i + 1].max(1)
+            labels_after = [
+                f"{self.image_encoder.image_model.config.id2label[m.item()]}: {p:0.2f}"
+                for m, p in zip(argmax_ps, max_ps)
+            ]
+            for j in indices[i + 1]:
+                text = labels_after[j]
+                xmin = bboxes[i + 1, j, 0]
+                ymin = bboxes[i + 1, j, 1]
+                ax3.text(
+                    xmin,
+                    ymin,
+                    text,
+                    fontsize=15,
+                    bbox=dict(facecolor="yellow", alpha=0.5),
+                )
+
+            ax3.imshow(im_after.permute(1, 2, 0))
+            ax3.set_axis_off()
+
+            # If we haven't already shown or saved the plot, then we need to
+            # draw the figure first...
+            fig.canvas.draw()
+            data = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+            data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+            plots.append(data)
+            labels.append(i)
+
+        self.logger.log_image("plots", plots, caption=labels)
 
     def validation_step(
         self, batch, batch_idx

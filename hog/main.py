@@ -1,5 +1,6 @@
 import hydra
 import pytorch_lightning as pl
+import wandb
 from hydra.core.config_store import ConfigStore
 from omegaconf import OmegaConf
 from pytorch_lightning.callbacks import ModelCheckpoint
@@ -63,7 +64,7 @@ def main(cfg: HogConfig)->None:
 
     print("Training...")
     trainer.fit(model, datamodule=pigpen)
-    wandb_logger.finalize("finished")
+    wandb.finish()
 
     print("Loading NLU Task..")
 

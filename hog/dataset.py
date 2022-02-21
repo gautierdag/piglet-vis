@@ -13,13 +13,15 @@ from transformers import AutoTokenizer, DetrFeatureExtractor
 PigPenExample = Dict[str, Union[str, torch.Tensor]]
 
 # Channel-wise pixel statistics collected over entire dataset
-MEAN = torch.tensor([0.49458119, 0.43375753, 0.34601003])
-STD = torch.tensor([0.19409628, 0.19771467, 0.19638838])
+# MEAN = torch.tensor([0.49458119, 0.43375753, 0.34601003])
+# STD = torch.tensor([0.19409628, 0.19771467, 0.19638838])
+
+MEAN = torch.tensor([0.485, 0.456, 0.406])  # image net MEAN
+STD = torch.tensor([0.229, 0.224, 0.225])  # image net STD
 
 
 def denormalize_image(image):
     denormed = image * STD[:, None, None] + MEAN[:, None, None]
-    denormed = denormed.permute(1, 2, 0)
     return denormed
 
 
@@ -240,6 +242,7 @@ class PigPenDataModule(pl.LightningDataModule):
                     "facebook/detr-resnet-50",
                     cache_dir=f"{self.output_dir_path}/vision_model/detr",
                     do_resize=False,
+                    do_normalize=True,
                 )
             else:
                 raise NotImplemented(f"Image model {self.vision_model} not implemented")
