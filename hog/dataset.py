@@ -30,7 +30,7 @@ def load_image_from_path(path: str) -> torch.Tensor:
 class PigPenDataset(Dataset):
     def __init__(
         self,
-        data_dir="../data",
+        data_dir_path="../data",
         data_split: Optional[Literal["train", "val", "test"]] = "train",
         images=False,
         annotations=False,
@@ -38,7 +38,7 @@ class PigPenDataset(Dataset):
     ):
         """
         Args:
-            data_dir: directory containing the data
+            data_dir_path: directory containing the data
             data_split: train, val or test
             images: if True, return the images as well as the action/object vectors
             annotations: if True, return the annotations as well as the action/object vectors
@@ -50,26 +50,28 @@ class PigPenDataset(Dataset):
         self.annotations = annotations
         self.randomise_annotations = randomise_annotations
 
-        self.action_matrix = np.load(f"{data_dir}/actions_{data_split}.npy")
-        self.objects_matrix = np.load(f"{data_dir}/objects_{data_split}.npy")
+        self.action_matrix = np.load(f"{data_dir_path}/actions_{data_split}.npy")
+        self.objects_matrix = np.load(f"{data_dir_path}/objects_{data_split}.npy")
         assert len(self.action_matrix) == len(self.objects_matrix)
 
         if self.images:
-            image_indices_file = f"{data_dir}/img_indices_{data_split}.npy"
-            self.image_directory = f"{data_dir}/{data_split}"
+            image_indices_file = f"{data_dir_path}/img_indices_{data_split}.npy"
+            self.image_directory = f"{data_dir_path}/{data_split}"
 
             self.image_indices = np.load(image_indices_file)
             assert len(self.action_matrix) == len(self.image_indices)
 
         if self.annotations:
             self.precondition_text = np.load(
-                f"{data_dir}/precondition_language_{data_split}.npy", allow_pickle=True
+                f"{data_dir_path}/precondition_language_{data_split}.npy",
+                allow_pickle=True,
             )
             self.action_text = np.load(
-                f"{data_dir}/action_language_{data_split}.npy", allow_pickle=True
+                f"{data_dir_path}/action_language_{data_split}.npy", allow_pickle=True
             )
             self.postcondition_text = np.load(
-                f"{data_dir}/postcondition_language_{data_split}.npy", allow_pickle=True
+                f"{data_dir_path}/postcondition_language_{data_split}.npy",
+                allow_pickle=True,
             )
 
             # 3 annotators per example
@@ -144,14 +146,18 @@ def collate_fn_generator(
     ) -> Dict[str, Union[torch.Tensor, Dict[str, torch.Tensor]]]:
         items: Dict[str, Union[torch.Tensor, Dict[str, torch.Tensor]]] = {}
         for key in batch[0].keys():
-            if "text" in key and tokenizer is not None:
+            if "text" in key:
+                assert tokenizer is not None, "tokenizer not provided"
                 items[key] = tokenizer(
                     [batch_item[key] for batch_item in batch],
                     padding=True,
                     return_tensors="pt",
                     truncation=True,
                 )
-            if "images" in key and image_feature_extractor is not None:
+            elif "images" in key:
+                assert (
+                    image_feature_extractor is not None
+                ), "image feature extractor not provided"
                 images = torch.stack([batch_item[key] for batch_item in batch])
                 images = rearrange(images, "b i c h w -> (b i) c h w", c=3, i=2)
                 items[key] = image_feature_extractor(list(images), return_tensors="pt")[
@@ -168,7 +174,8 @@ def collate_fn_generator(
 class PigPenDataModule(pl.LightningDataModule):
     def __init__(
         self,
-        data_dir: str = "../data",
+        data_dir_path: str = "../data",
+        output_dir_path: str = "../output",
         batch_size: int = 32,
         images=False,
         annotations=False,
@@ -178,7 +185,8 @@ class PigPenDataModule(pl.LightningDataModule):
         num_workers=4,
     ):
         super().__init__()
-        self.data_dir = data_dir
+        self.data_dir_path = data_dir_path
+        self.output_dir_path = output_dir_path
         self.batch_size = batch_size
         self.images = images
         self.annotations = annotations
@@ -193,14 +201,14 @@ class PigPenDataModule(pl.LightningDataModule):
         stage is a string for modes: fit/predict/validate/test
         """
         self.pigpen_train = PigPenDataset(
-            data_dir=self.data_dir,
+            data_dir_path=self.data_dir_path,
             data_split="train",
             images=self.images,
             annotations=self.annotations,
             randomise_annotations=self.randomise_annotations,
         )
         self.pigpen_val = PigPenDataset(
-            data_dir=self.data_dir,
+            data_dir_path=self.data_dir_path,
             data_split="val",
             images=self.images,
             annotations=self.annotations,
@@ -214,11 +222,11 @@ class PigPenDataModule(pl.LightningDataModule):
         if self.annotations:
             tokenizer = AutoTokenizer.from_pretrained(
                 self.bert_model,
-                cache_dir=f"output/bert-models/{self.bert_model}",
+                cache_dir=f"{self.output_dir_path}/bert-models/{self.bert_model}",
                 model_max_length=512,
             )
             self.pigpen_test = PigPenDataset(
-                data_dir=self.data_dir,
+                data_dir_path=self.data_dir_path,
                 data_split="test",
                 images=self.images,
                 annotations=self.annotations,
@@ -230,14 +238,16 @@ class PigPenDataModule(pl.LightningDataModule):
             if self.vision_model == "detr":
                 image_feature_extractor = DetrFeatureExtractor.from_pretrained(
                     "facebook/detr-resnet-50",
-                    cache_dir=f"output/vision_model/detr",
+                    cache_dir=f"{self.output_dir_path}/vision_model/detr",
                     do_resize=False,
                 )
             else:
                 raise NotImplemented(f"Image model {self.vision_model} not implemented")
 
         if tokenizer is not None or image_feature_extractor is not None:
-            self.collate_fn = collate_fn_generator(tokenizer)
+            self.collate_fn = collate_fn_generator(
+                tokenizer=tokenizer, image_feature_extractor=image_feature_extractor
+            )
 
     def train_dataloader(self):
         return DataLoader(

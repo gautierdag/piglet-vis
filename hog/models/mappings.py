@@ -1,3 +1,6 @@
+import pickle
+from typing import Dict
+
 OBJECT_ATTRIBUTES = [
     "ObjectName",
     "parentReceptacles",
@@ -40,15 +43,18 @@ OBJECT_ATTRIBUTES = [
 ]
 
 
-ACTIONS_MAPPER = {
-    0: "DirtyObject",
-    1: "OpenObject",
-    2: "SliceObject",
-    3: "ToggleObjectOff",
-    4: "ToggleObjectOn",
-    5: "EmptyLiquidFromObject",
-    6: "PickupObject",
-    7: "HeatUpPan",
-    8: "CloseObject",
-    9: "PutObject",
-}
+def get_actions_mapper(data_dir_path: str) -> Dict[int, str]:
+    """
+    Return a dict mapping index to action name
+    """
+    with open(f"{data_dir_path}/reverse_action_mapping.pkl", "rb") as f:
+        return pickle.load(f)
+
+
+def get_objects_mapper(data_dir_path: str) -> Dict[int, str]:
+    """
+    Return a dict mapping index to object name
+    """
+    with open(f"{data_dir_path}/reverse_object_mapping.pkl", "rb") as f:
+        # select first index since the first index is the objet name encoded as an int
+        return pickle.load(f)[0]

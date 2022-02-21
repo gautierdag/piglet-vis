@@ -2,24 +2,33 @@
 defaults:
   - base_config
 
+gpus: "1"
+seed: 42
+fast: false
+images: false
+
 paths:
   # path to directory containing input data
-  input_dir: "${hydra:runtime.cwd}/../data/"
+  input_dir: "${hydra:runtime.cwd}/data"
   # path to directory to save output data
-  output_dir: "${hydra:runtime.cwd}/../outputs/"
-
-train:
-  gpus: "1"
-  job_type: "base"
-  batch_size: 16
-  max_epochs: 20
-  seed: 42
-  fast: false
-  images: false
+  output_dir: "${hydra:runtime.cwd}/output"
 
 model:
-  hidden_size: 64
-  num_layers: 1
+  hidden_size: 128
+  num_layers: 3
   num_heads: 4
   bert_model: "roberta-base"
   dropout: 0.1
+  
+pretrain:
+  batch_size: 512
+  max_epochs: 5
+  learning_rate: 0.001
+
+nlu:
+  batch_size: 64
+  max_epochs: 80
+  learning_rate: 0.00001
+
+
+

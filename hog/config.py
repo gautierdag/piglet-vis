@@ -8,17 +8,6 @@ class Paths:
 
 
 @dataclass
-class Train:
-    gpus: str
-    job_type: str
-    batch_size: int
-    max_epochs: int
-    seed: int
-    fast: bool
-    images: bool
-
-
-@dataclass
 class Model:
     hidden_size: int
     num_layers: int
@@ -28,7 +17,29 @@ class Model:
 
 
 @dataclass
+class Train:
+    batch_size: int
+    max_epochs: int
+    learning_rate: float
+
+
+@dataclass
+class Pretrain(Train):
+    job_type: str = "pretrain"
+
+
+@dataclass
+class NLU(Train):
+    job_type: str = "nlu_task"
+
+
+@dataclass
 class HogConfig:
-    paths: Paths
-    train: Train
-    model: Model
+    seed: int
+    gpus: str  # use "1" to use only one gpu
+    fast: bool  # whether to run fast dev run
+    images: bool  # whether to use images
+    paths: Paths  # input and output directories
+    model: Model  # model parameters constant for both pretrain and nlu
+    pretrain: Pretrain  # Settings specific to pretraining
+    nlu: NLU  # Settings specific to NLU finetuning task

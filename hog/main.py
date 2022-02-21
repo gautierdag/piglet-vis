@@ -18,12 +18,13 @@ cs.store(name="base_config", node=HogConfig)
 def main(cfg: HogConfig)->None:
     print(OmegaConf.to_yaml(cfg))
     
-    seed_everything(cfg.train.seed)
+    seed_everything(cfg.seed)
 
     wandb_logger = WandbLogger(
+        name=f"{cfg.pretrain.job_type}",
         project="hog",
         entity="itl",
-        job_type=cfg.train.job_type,
+        job_type=cfg.pretrain.job_type,
         config=cfg,
         save_dir=f"{cfg.paths.output_dir}",
     )
@@ -32,58 +33,82 @@ def main(cfg: HogConfig)->None:
 
     print("Loading dataset")
     pigpen = PigPenDataModule(
-        data_dir=cfg.paths.input_dir, batch_size=cfg.train.batch_size, images=cfg.train.images
+        data_dir_path=cfg.paths.input_dir, batch_size=cfg.pretrain.batch_size, images=cfg.images
     )
 
     print("Creating Model")
     model = Piglet(
-        reverse_object_mapping_dir=cfg.paths.input_dir,
+        data_dir_path=cfg.paths.input_dir,
+        output_dir_path=f"{cfg.paths.output_dir}",
         hidden_size=cfg.model.hidden_size,
         num_layers=cfg.model.num_layers,
         num_heads=cfg.model.num_heads,
         dropout=cfg.model.dropout,
-        encode_images=cfg.train.images,
+        encode_images=cfg.images,
     )
 
     print("Creating Trainer")
     checkpoint_callback = ModelCheckpoint(
         monitor="val/loss", dirpath=f"{cfg.paths.output_dir}/checkpoints/{run_name}"
     )
-    if cfg.train.fast:
-        trainer = pl.Trainer(
-            max_epochs=cfg.train.max_epochs,
-            logger=wandb_logger,
-            gpus=cfg.train.gpus,
-            callbacks=[checkpoint_callback],
-            limit_train_batches=10,
-            limit_val_batches=10,
-            log_every_n_steps=1,
-        )
-    else:
-        trainer = pl.Trainer(
-            max_epochs=cfg.train.max_epochs,
-            logger=wandb_logger,
-            gpus=cfg.train.gpus,
-            callbacks=[checkpoint_callback],
-            val_check_interval=0.1,  # check val 10x per epoch
-        )
+    
+    trainer = pl.Trainer(
+        max_epochs=cfg.pretrain.max_epochs,
+        logger=wandb_logger,
+        gpus=cfg.gpus,
+        callbacks=[checkpoint_callback],
+        val_check_interval=0.1,  # check val 10x per epoch
+        fast_dev_run=cfg.fast
+    )
 
     print("Training...")
     trainer.fit(model, datamodule=pigpen)
 
-    print("Loading Annotated Dataset")
-    # pigpen_annotated = PigPenDataModule(
-    #     data_dir=f"{hparams.input_dir}/annotated",
-    #     batch_size=hparams.batch_size,
-    #     annotations=True,
-    # )
+    print("Loading NLU Task..")
 
-    # annotations_model = Piglet.load_from_checkpoint(
-    #     checkpoint_callback.best_model_path,
-    #     strict=False,
-    #     symbolic_action=False,
-    #     learning_rate=0.00001,
-    # )
+    run_name = "nlu_task"
+    pigpen = PigPenDataModule(
+        data_dir_path=f"{cfg.paths.input_dir}/annotated",
+        output_dir_path=f"{cfg.paths.output_dir}",
+        batch_size=cfg.nlu.batch_size,
+        annotations=True,
+    )
+
+    model = Piglet.load_from_checkpoint(
+        checkpoint_callback.best_model_path,
+        strict=False,
+        symbolic_action=False,
+        learning_rate=cfg.nlu.learning_rate,
+        output_dir_path=f"{cfg.paths.output_dir}",
+    )
+
+    checkpoint_callback = ModelCheckpoint(
+        monitor="val/loss", dirpath=f"{cfg.paths.output_dir}/checkpoints/{run_name}"
+    )
+
+    wandb_logger = WandbLogger(
+        name=f"{cfg.nlu.job_type}",
+        project="hog",
+        entity="itl",
+        job_type=cfg.nlu.job_type,
+        config=cfg,
+        save_dir=f"{cfg.paths.output_dir}",
+    )
+
+    trainer = pl.Trainer(
+        max_epochs=cfg.nlu.max_epochs,
+        logger=wandb_logger,
+        gpus=cfg.gpus,
+        callbacks=[checkpoint_callback],
+        fast_dev_run=cfg.fast,
+        log_every_n_steps=1,
+    )
+
+    print("Training...")
+    trainer.fit(model, datamodule=pigpen)
+
+    print("Testing...")
+    trainer.test(model, datamodule=pigpen)
 
 
 if __name__ == "__main__":

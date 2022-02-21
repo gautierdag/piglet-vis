@@ -12,7 +12,7 @@ from .action_models import (
     PigletSymbolicActionEncoder,
 )
 from .image_models import PigletImageEncoder
-from .mappings import ACTIONS_MAPPER, OBJECT_ATTRIBUTES
+from .mappings import OBJECT_ATTRIBUTES, get_actions_mapper, get_objects_mapper
 from .object_models import PigletObjectDecoder, PigletObjectEncoder
 
 
@@ -28,10 +28,10 @@ class Piglet(pl.LightningModule):
         num_attributes=38,
         none_object_index=102,
         action_embedding_size=10,
-        reverse_object_mapping_dir="data",
-        symbolic_action=True,
+        data_dir_path="data",
+        output_dir_path="output",
+        pretrain=True,
         bert_model_name="roberta-base",
-        bert_model_dir="output/bert-models",
         encode_images=False,
     ):
         """
@@ -57,16 +57,16 @@ class Piglet(pl.LightningModule):
         self.num_attributes = num_attributes
         self.none_object_index = none_object_index  # mask object tensor with zeroes if object = none_object_index
         self.action_embedding_size = action_embedding_size
-        self.symbolic_action = symbolic_action
-        self.bert_model_name = bert_model_name
-        self.bert_model_dir = bert_model_dir
+        self.pretrain = pretrain
         self.encode_images = encode_images
 
         assert len(OBJECT_ATTRIBUTES) == self.num_attributes
 
         # Image encoder
         if self.encode_images:
-            self.image_encoder = PigletImageEncoder(hidden_size=hidden_size)
+            self.image_encoder = PigletImageEncoder(
+                hidden_size=hidden_size, output_dir_path=output_dir_path
+            )
 
         # Object Encoder Model
         self.object_encoder = PigletObjectEncoder(
@@ -80,7 +80,7 @@ class Piglet(pl.LightningModule):
         )
 
         # Action Encoder Model
-        if self.symbolic_action:
+        if self.pretrain:
             self.action_encoder = PigletSymbolicActionEncoder(
                 hidden_size=hidden_size,
                 num_layers=num_layers,
@@ -90,8 +90,8 @@ class Piglet(pl.LightningModule):
         else:
             self.action_encoder = PigletAnnotatedActionEncoder(
                 hidden_size=hidden_size,
-                bert_model_name="roberta-base",
-                bert_model_dir="output/bert-models",
+                bert_model_name=bert_model_name,
+                output_dir_path=output_dir_path,
             )
 
         # Action Apply Model
@@ -111,8 +111,11 @@ class Piglet(pl.LightningModule):
             object_embedding_size=object_embedding_size,
             num_attributes=num_attributes,
             none_object_index=none_object_index,
-            reverse_object_mapping_dir=reverse_object_mapping_dir,
+            data_dir_path=data_dir_path,
         )
+
+        self.action_idx_to_name = get_actions_mapper(data_dir_path)
+        self.object_idx_to_name = get_objects_mapper(data_dir_path)
 
     def forward(
         self, object_inputs, action_inputs, action_text_inputs=None, image_inputs=None
@@ -128,7 +131,7 @@ class Piglet(pl.LightningModule):
         if self.encode_images:
             h_o = self.image_encoder(image_inputs)
 
-        if self.symbolic_action:
+        if self.pretrain:
             # sum the embedding of object targeted and its receptacle
             action_args_embeddings = self.object_encoder.object_embedding_layer(
                 action_inputs[:, 1:]
@@ -177,7 +180,7 @@ class Piglet(pl.LightningModule):
 
         return avg_loss, predictions
 
-    def training_step(self, batch, batch_idx) -> torch.tensor:
+    def training_step(self, batch, batch_idx) -> torch.Tensor:
         objects = batch["objects"]
         actions = batch["actions"]
         images = batch.get("images", None)
@@ -198,7 +201,17 @@ class Piglet(pl.LightningModule):
         self.log("train/loss", avg_loss)
         return avg_loss
 
-    def process_inference_batch(self, batch, split="val") -> None:
+    def process_inference_batch(
+        self, batch, split="val"
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Process a batch of data for inference.
+        Returns a tuple of:
+            predictions: predicted object attributes post-action
+            objects_labels_pre: symbolic representation of the objects before action
+            objects_labels_post: symbolic representation of the objects post-action
+            action_inputs: symbolic representation of actions
+        """
         objects = batch["objects"]
         actions = batch["actions"]
         images = batch.get("images", None)
@@ -295,7 +308,7 @@ class Piglet(pl.LightningModule):
 
         # log accuracy of actions
         num_examples = outputs["actions"].shape[0]
-        for action_index, action_name in ACTIONS_MAPPER.items():
+        for action_index, action_name in self.action_idx_to_name.items():
             action_mask = outputs["actions"][:, 0] == action_index
             num_examples_with_action = action_mask.sum()
             if num_examples_with_action > 0:
@@ -316,19 +329,23 @@ class Piglet(pl.LightningModule):
                     == self.num_attributes
                 ).sum() / n
             else:
-                action_accuracy = torch.tensor(0, dtype=float)
+                action_accuracy = torch.tensor(0, dtype=torch.float)
 
             self.log(
                 f"{split}/accuracy/action_level/{action_name}_accuracy", action_accuracy
             )
 
-    def validation_step(self, batch, batch_idx) -> None:
+    def validation_step(
+        self, batch, batch_idx
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         return self.process_inference_batch(batch, split="val")
 
     def validation_epoch_end(self, validation_step_outputs) -> None:
         self.calculate_epoch_end_statistics(validation_step_outputs, split="val")
 
-    def test_step(self, batch, batch_idx) -> None:
+    def test_step(
+        self, batch, batch_idx
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         return self.process_inference_batch(batch, split="test")
 
     def test_epoch_end(self, test_step_outputs) -> None:

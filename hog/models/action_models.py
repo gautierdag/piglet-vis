@@ -52,13 +52,13 @@ class PigletAnnotatedActionEncoder(nn.Module):
         self,
         hidden_size=256,
         bert_model_name="roberta-base",
-        bert_model_dir="output/bert-models",
+        output_dir_path="output",
     ):
         super().__init__()
         self.hidden_size = hidden_size
         self.bert_model = AutoModel.from_pretrained(
             bert_model_name,
-            cache_dir=f"{bert_model_dir}/{bert_model_name}",
+            cache_dir=f"{output_dir_path}/bert-models/{bert_model_name}",
             add_pooling_layer=False,
         )
         self.output_layer = nn.Linear(self.bert_model.config.hidden_size, hidden_size)
