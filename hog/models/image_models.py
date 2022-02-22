@@ -1,4 +1,4 @@
-from typing import Tuple, Union
+from typing import Dict
 
 import torch
 import torch.nn as nn
@@ -15,7 +15,6 @@ class PigletImageEncoder(nn.Module):
         output_dir_path="output",
         width=640,
         height=384,
-        K=1000,
         num_objects=2,
     ):
         super().__init__()
@@ -27,11 +26,6 @@ class PigletImageEncoder(nn.Module):
         self.width = width
         self.heigth = height
 
-        # K is a hyperparameter that controls the impact of the diff average pixel wise present in a bounding box
-        # The lower K is the less the model will focus on the bounding boxes which contain the
-        # average pixel wise difference between the pre-action and post-action images and
-        # instead will focus more on ones it has confidently labeled
-        self.K: int = K
         self.num_objects = num_objects
 
         if image_model_name == "detr":
@@ -69,7 +63,7 @@ class PigletImageEncoder(nn.Module):
 
         x = torch.arange(0, height, dtype=torch.float, device=bboxes.device)
         y = torch.arange(0, width, dtype=torch.float, device=bboxes.device)
-        x, y = torch.meshgrid(x, y, indexing="ij")
+        y, x = torch.meshgrid(x, y, indexing="ij") # this looks like a mistake but this is not a mistake
 
         y = repeat(y, "h w -> h w b n", n=N, b=batch_size)
         x = repeat(x, "h w -> h w b n", n=N, b=batch_size)
@@ -83,19 +77,7 @@ class PigletImageEncoder(nn.Module):
         masks = rearrange(masks, "h w b n -> b n h w")
         return masks
 
-    def forward(
-        self, images: torch.Tensor, training=True
-    ) -> Union[
-        Tuple[torch.Tensor, torch.Tensor],
-        Tuple[
-            torch.Tensor,
-            torch.Tensor,
-            torch.Tensor,
-            torch.Tensor,
-            torch.Tensor,
-            torch.Tensor,
-        ],
-    ]:
+    def forward(self, images: torch.Tensor, training=True) -> Dict[str, torch.Tensor]:
         """
         Args:
             images: [batch_size*2, C, W, H]
@@ -105,37 +87,35 @@ class PigletImageEncoder(nn.Module):
             probas: [batch_size*2, N, K]
             bboxes: [batch_size*2, N, 4]
             indices: [batch_size*2, N]
-            diff_images: [batch_size*2*2, 1, W, H]
+            image_diffs: [batch_size*2*2, 1, W, H]
         """
         outputs = self.image_model(pixel_values=images)
         # softmax over labels to get probabilities per class for each bounding box
         probas = outputs.logits.softmax(-1)[:, :, :-1]
 
         # convert bounding boxes from cx cy w h to x y x y
-        bboxes = (
-            torchvision.ops.box_convert(outputs.pred_boxes, "cxcywh", "xyxy")
-            * self.img_dims
-        ).int()
+        bboxes = torchvision.ops.box_convert(outputs.pred_boxes, "cxcywh", "xyxy")
+        bboxes = (bboxes * self.img_dims).int()
 
         # convert bboxes to img masks
         masks = self.bboxes_to_mask(bboxes)
 
         # calculate pixel wise difference between pre-action and post action image
-        diff_images = (
+        image_diffs = (
             reduce(images, "(b i) c h w -> b i h w", "sum", i=2, c=3).diff(dim=1).abs()
         )
-        diff_images = repeat(diff_images, "b i h w -> (b i 2) 1 h w", i=1)
+        image_diffs = repeat(image_diffs, "b i h w -> (b i 2) 1 h w", i=1)
 
-        # calculate average pixel wise difference between pre-action and post action image for each bounding box
-        bbox_scores = reduce(masks * diff_images, "b n h w -> b n", "mean")
+        # calculate IOU between bounding boxes and segmentation mask of changed pixels
+        bbox_intersection = reduce(masks *  (image_diffs > 0), "b n h w -> b n", "sum")
+        bbox_union = reduce(masks |  (image_diffs > 0), "b n h w -> b n", "sum")
 
         # filter out low confidence bounding boxes based on threshold
         # scores =  (bbox_scores * self.K).softmax(-1)  + probas.max(-1).values
-        scores = bbox_scores
-        # print(scores[0])
+        bbox_scores = bbox_intersection / bbox_union
 
         # select the top num_objects bounding boxes based on scores
-        indices = torch.topk(scores, k=self.num_objects)[1]
+        indices = torch.topk(bbox_scores, k=self.num_objects)[1]
 
         # select hidden states for the top num_objects bounding boxes
         h_i = outputs.last_hidden_state[
@@ -150,7 +130,15 @@ class PigletImageEncoder(nn.Module):
 
         h_i_pre_action = h_i[:, 0]
         h_i_post_action = h_i[:, 1]
-        if training:
-            return h_i_pre_action, h_i_post_action
 
-        return (h_i_pre_action, h_i_post_action, probas, bboxes, indices, diff_images)
+        output = {"h_i_pre_action": h_i_pre_action, "h_i_post_action": h_i_post_action}
+        if training:
+            return output
+
+        output["probas"] = probas
+        output["bboxes"] = bboxes
+        output["indices"] = indices
+        output["diffs"] = image_diffs
+        output["bbox_scores"] = bbox_scores
+
+        return output

@@ -6,9 +6,9 @@ import numpy as np
 import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
-import torchvision
 from dataset import denormalize_image
 from einops import rearrange
+from PIL import Image
 
 from .action_models import (
     PigletActionApplyModel,
@@ -63,6 +63,7 @@ class Piglet(pl.LightningModule):
         self.action_embedding_size = action_embedding_size
         self.pretrain = pretrain
         self.encode_images = encode_images
+        self.plotted_images = False
 
         assert len(OBJECT_ATTRIBUTES) == self.num_attributes
 
@@ -139,7 +140,7 @@ class Piglet(pl.LightningModule):
 
         if self.encode_images:
             image_model_outputs = self.image_encoder(image_inputs, training=training)
-            h_o = image_model_outputs[0]
+            h_o = image_model_outputs["h_i_pre_action"]
 
         if self.pretrain:
             # sum the embedding of object targeted and its receptacle
@@ -239,10 +240,12 @@ class Piglet(pl.LightningModule):
         avg_loss, _ = self.calculate_object_attribute_loss_and_predictions(
             h_o_post_ouput, objects_labels_post
         )
-        self.log("train/loss", avg_loss)
+        self.log("train/loss", avg_loss, batch_size=len(batch["objects"]))
         return avg_loss
 
-    def process_inference_batch(self, batch, split="val") -> Dict[str, torch.Tensor]:
+    def process_inference_batch(
+        self, batch, batch_idx, split="val"
+    ) -> Dict[str, torch.Tensor]:
         """
         Process a batch of data for inference.
         Returns a tuple of:
@@ -279,7 +282,7 @@ class Piglet(pl.LightningModule):
         avg_loss, predictions = self.calculate_object_attribute_loss_and_predictions(
             h_o_post_ouput, objects_labels_post
         )
-        self.log(f"{split}/loss", avg_loss)
+        self.log(f"{split}/loss", avg_loss, batch_size=len(batch["objects"]))
         results: Dict[str, torch.Tensor] = {
             "predictions": predictions.cpu(),
             "objects_labels_pre": objects_labels_pre.cpu(),
@@ -287,12 +290,13 @@ class Piglet(pl.LightningModule):
             "actions": actions.cpu(),
         }
 
-        if images is not None:
+        if batch_idx == 0 and images is not None and image_outputs is not None:
             results["images"] = images.cpu()
-            results["image_probas"] = image_outputs[2].cpu()
-            results["image_bboxes"] = image_outputs[3].cpu()
-            results["image_indices"] = image_outputs[4].cpu()
-            results["image_diff"] = image_outputs[5].cpu()
+            results["image_probas"] = image_outputs["probas"].cpu()
+            results["image_bboxes"] = image_outputs["bboxes"].cpu()
+            results["image_indices"] = image_outputs["indices"].cpu()
+            results["image_diffs"] = image_outputs["diffs"].cpu()
+            results["image_bbox_scores"] = image_outputs["bbox_scores"].cpu()
 
         return results
 
@@ -389,121 +393,134 @@ class Piglet(pl.LightningModule):
                 f"{split}/accuracy/action_level/{action_name}_accuracy", action_accuracy
             )
 
-            if "images" in outputs:
+            if "images" in outputs and not self.plotted_images:
                 self.plot_images(outputs)
+                self.plotted_images = True
 
     def plot_images(
         self,
         outputs: Dict[str, torch.Tensor],
-        num_images: int = 4,
     ) -> None:
         images = outputs["images"]
         bboxes = outputs["image_bboxes"]
         indices = outputs["image_indices"]
         probas = outputs["image_probas"]
-        diff = outputs["image_diff"]
+        diff = outputs["image_diffs"]
+        scores = outputs["image_bbox_scores"]
 
-        plots = []
-        labels = []
-        for i in range(num_images):
-            plt.clf()
-            fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(32, 20))
-            im_before = torchvision.utils.draw_bounding_boxes(
-                (denormalize_image(images[i]) * 255).type(torch.uint8),
-                bboxes[i, indices[i].flatten(), :],
-                width=5,
+        # Get the color map by name for mapping diff images
+        cm = plt.get_cmap("hot", lut=8)
+        for img_idx in range(0, images.shape[0], 2):
+
+            # format bounding boxes for before image
+            image_before = denormalize_image(images[img_idx]).permute(1, 2, 0).numpy()
+            image_before_boxes = {"predictions": {"box_data": []}}
+            for bbox_idx, ((x_min, y_min, x_max, y_max), proba) in enumerate(
+                zip(bboxes[img_idx], probas[img_idx])
+            ):
+                box_id = proba.argmax().item()
+                box = {
+                    "position": {
+                        "minX": x_min.item(),
+                        "maxX": x_max.item(),
+                        "minY": y_min.item(),
+                        "maxY": y_max.item(),
+                    },
+                    "domain": "pixel",
+                    "class_id": box_id,
+                    "box_caption": self.image_encoder.image_model.config.id2label[
+                        box_id
+                    ],
+                    "scores": {
+                        "chosen": 1.0 if bbox_idx in indices[img_idx] else 0.0,
+                        "confidence": proba.max().item(),
+                        "overlap": scores[img_idx][bbox_idx].item(),
+                    },
+                }
+                image_before_boxes["predictions"]["box_data"].append(box)
+
+            # draw image diff using matplotlib for nice 'hot' gradient
+            d = diff[img_idx].permute(1, 2, 0).squeeze(-1)  # permute to (W,H,C)
+            d = (d - d.min()) / (d.max() - d.min())  # normalize
+            colored_image = cm(d.numpy())
+            # Obtain a 4-channel image (R,G,B,A) in float [0, 1]
+            # But we want to convert to RGB in uint8 and save it:
+            image_diff = Image.fromarray(
+                (colored_image[:, :, :3] * 255).astype(np.uint8)
             )
-            max_ps, argmax_ps = probas[i].max(1)
-            labels_before = [
-                f"{self.image_encoder.image_model.config.id2label[m.item()]}: {p:0.2f}"
-                for m, p in zip(argmax_ps, max_ps)
-            ]
-            for j in indices[i]:
-                text = labels_before[j]
-                xmin = bboxes[i, j, 0]
-                ymin = bboxes[i, j, 1]
-                ax1.text(
-                    xmin,
-                    ymin,
-                    text,
-                    fontsize=15,
-                    bbox=dict(facecolor="yellow", alpha=0.5),
-                )
-            ax1.imshow(im_before.permute(1, 2, 0))
-            ax1.set_axis_off()
 
-            action_text = self.action_idx_to_name[
-                outputs["actions"][int(i / 2)][0].item()
-            ]
-            action_object = self.object_idx_to_name[
-                outputs["actions"][int(i / 2)][1].item()
-            ]
-            action_receptacle = self.object_idx_to_name[
-                outputs["actions"][int(i / 2)][2].item()
-            ]
-
-            object_1 = self.object_idx_to_name[
-                outputs["objects_labels_pre"][i][0].item()
-            ]
-            object_2 = self.object_idx_to_name[
-                outputs["objects_labels_pre"][i + 1][0].item()
-            ]
-            title = f"Effects of {action_text}({action_object}, {action_receptacle}) on ({object_1},{object_2})"
-
-            ax2.imshow(diff[i].permute(1, 2, 0))
-            ax2.set_axis_off()
-            ax2.set_title(title, fontsize=24)
-
-            im_after = torchvision.utils.draw_bounding_boxes(
-                (denormalize_image(images[i + 1]) * 255).type(torch.uint8),
-                bboxes[i + 1, indices[i + 1].flatten(), :],
-                width=5,
+            # format bounding boxes for after image
+            image_after = (
+                denormalize_image(images[img_idx + 1]).permute(1, 2, 0).numpy()
             )
-            max_ps, argmax_ps = probas[i + 1].max(1)
-            labels_after = [
-                f"{self.image_encoder.image_model.config.id2label[m.item()]}: {p:0.2f}"
-                for m, p in zip(argmax_ps, max_ps)
-            ]
-            for j in indices[i + 1]:
-                text = labels_after[j]
-                xmin = bboxes[i + 1, j, 0]
-                ymin = bboxes[i + 1, j, 1]
-                ax3.text(
-                    xmin,
-                    ymin,
-                    text,
-                    fontsize=15,
-                    bbox=dict(facecolor="yellow", alpha=0.5),
-                )
+            image_after_boxes = {"predictions": {"box_data": []}}
+            for bbox_idx, ((x_min, y_min, x_max, y_max), proba) in enumerate(
+                zip(bboxes[img_idx + 1], probas[img_idx + 1])
+            ):
+                box_id = proba.argmax().item()
+                box = {
+                    "position": {
+                        "minX": x_min.item(),
+                        "maxX": x_max.item(),
+                        "minY": y_min.item(),
+                        "maxY": y_max.item(),
+                    },
+                    "domain": "pixel",
+                    "class_id": box_id,
+                    "box_caption": self.image_encoder.image_model.config.id2label[
+                        box_id
+                    ],
+                    "scores": {
+                        "chosen": 1.0 if bbox_idx in indices[img_idx + 1] else 0.0,
+                        "confidence": proba.max().item(),
+                        "overlap": scores[img_idx + 1][bbox_idx].item(),
+                    },
+                }
+                image_after_boxes["predictions"]["box_data"].append(box)
 
-            ax3.imshow(im_after.permute(1, 2, 0))
-            ax3.set_axis_off()
+            title = self.get_example_title_from_actions_object(
+                outputs["actions"], outputs["objects_labels_pre"], img_idx
+            )
 
-            # If we haven't already shown or saved the plot, then we need to
-            # draw the figure first...
-            fig.canvas.draw()
-            data = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
-            data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
-            plots.append(data)
-            labels.append(i)
+            self.logger.log_image(
+                f"images",
+                [image_before, image_diff, image_after],
+                boxes=[
+                    image_before_boxes,
+                    {"predictions": {"box_data": []}},
+                    image_after_boxes,
+                ],
+                caption=["before", title, "after"],
+            )
 
-        self.logger.log_image("plots", plots, caption=labels)
-
-    def validation_step(
-        self, batch, batch_idx
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        return self.process_inference_batch(batch, split="val")
+    def validation_step(self, batch, batch_idx) -> Dict[str, torch.Tensor]:
+        return self.process_inference_batch(batch, batch_idx, split="val")
 
     def validation_epoch_end(self, validation_step_outputs) -> None:
         self.calculate_epoch_end_statistics(validation_step_outputs, split="val")
 
-    def test_step(
-        self, batch, batch_idx
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        return self.process_inference_batch(batch, split="test")
+    def test_step(self, batch, batch_idx) -> Dict[str, torch.Tensor]:
+        return self.process_inference_batch(batch, batch_idx, split="test")
 
     def test_epoch_end(self, test_step_outputs) -> None:
+        self.plotted_images = False
         self.calculate_epoch_end_statistics(test_step_outputs, split="test")
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
         return torch.optim.Adam(self.parameters(), lr=self.learning_rate)
+
+    def get_example_title_from_actions_object(
+        self, actions, objects, index: int
+    ) -> str:
+        """
+        Actions: [B x 3]
+        Object: [B x 2, num_attributes]
+        """
+        assert 0 <= index < objects.shape[0] - 1
+
+        action_text = self.action_idx_to_name[actions[int(index / 2)][0].item()]
+        action_object = self.object_idx_to_name[actions[int(index / 2)][1].item()]
+        action_receptacle = self.object_idx_to_name[actions[int(index / 2)][2].item()]
+        object_1 = self.object_idx_to_name[objects[index][0].item()]
+        object_2 = self.object_idx_to_name[objects[index + 1][0].item()]
+        return f"Effects of {action_text}({action_object}, {action_receptacle}) on ({object_1},{object_2})"

@@ -18,11 +18,11 @@ cs.store(name="base_config", node=HogConfig)
 @hydra.main(config_path="conf", config_name="config")
 def main(cfg: HogConfig)->None:
     print(OmegaConf.to_yaml(cfg))
-    
+
     seed_everything(cfg.seed)
 
     wandb_logger = WandbLogger(
-        name=f"{cfg.pretrain.job_type}",
+        name=f"{cfg.pretrain.job_type}_{cfg.seed}_img{cfg.images}",
         project="hog",
         entity="itl",
         job_type=cfg.pretrain.job_type,

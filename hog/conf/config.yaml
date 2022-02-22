@@ -1,14 +1,17 @@
 # needed to validate the config yaml
 defaults:
-  - base_config
-
-hydra:
-  output_subdir: null
+  - base_config 
+  - _self_
 
 gpus: "1"
 seed: 42
 fast: false
 images: true
+
+hydra:
+  output_subdir: null
+  run:
+    dir: .
 
 paths:
   # path to directory containing input data
@@ -24,7 +27,7 @@ model:
   dropout: 0.1
   
 pretrain:
-  batch_size: 16
+  batch_size: 8
   max_epochs: 5
   learning_rate: 0.001
 
