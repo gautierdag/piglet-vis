@@ -7,8 +7,9 @@ import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
 from dataset import denormalize_image
-from einops import rearrange
+from einops import rearrange, repeat
 from PIL import Image
+from torchtyping import TensorType
 
 from .action_models import (
     PigletActionApplyModel,
@@ -104,7 +105,6 @@ class Piglet(pl.LightningModule):
             hidden_size=hidden_size,
             num_layers=num_layers,
             dropout=dropout,
-            input_fuse_size=hidden_size * 3,
         )
 
         # Object Decoder
@@ -133,15 +133,6 @@ class Piglet(pl.LightningModule):
         # check that image inputs are not passed if no image encoder and vice versa
         assert (image_inputs is None) == (not self.encode_images)
 
-        batch_size = object_inputs.shape[0]
-
-        # embed object vector
-        h_o, object_embeddings = self.object_encoder(object_inputs)
-
-        if self.encode_images:
-            image_model_outputs = self.image_encoder(image_inputs, training=training)
-            h_o = image_model_outputs["h_i_pre_action"]
-
         if self.pretrain:
             # sum the embedding of object targeted and its receptacle
             action_args_embeddings = self.object_encoder.object_embedding_layer(
@@ -153,18 +144,40 @@ class Piglet(pl.LightningModule):
                 action_text_inputs["input_ids"], action_text_inputs["attention_mask"]
             )
 
-        # apply action to object hidden representations
-        h_o_a = self.apply_action(h_o.reshape(batch_size, -1), h_a)
+        image_model_outputs = None
+        if self.encode_images:
+            object_names = self.object_encoder.object_embedding_layer(
+                object_inputs[:, :, 0]
+            )
+            conditional_vector = torch.cat(
+                (repeat(h_a, "b h -> b 4 h"), object_names), dim=2
+            )
+            image_model_outputs = self.image_encoder(
+                image_inputs, conditional_vector, training=training
+            )
+            h_o = image_model_outputs["h_i_o"]
+        else:
+            # embed object vector
+            h_o = self.object_encoder(object_inputs)
 
-        # use transformer decoder and pass object_embeddings as src vector and h_o_a as the memory vector
-        h_o_post = self.object_decoder(h_o_a, object_embeddings)
+        # select only the pre action objects
+        h_o_pre = h_o[:, [0, 1], :]
+
+        # apply action to object hidden representations
+        h_o_a = self.apply_action(h_o_pre, h_a)
+
+        # use transformer decoder and pass pre_object as src vector and h_o_a as the memory vector
+        h_o_post_pred = self.object_decoder(h_o_a, h_o_pre)
+
+        h_o_a_init = torch.zeros_like(h_o_a)
+        h_o_pre_pred = self.object_decoder(h_o_a_init, h_o_pre)
 
         # returns predicted sequence of object attributes
         # torch.Size([batch_size*2, num_attributes, object_embedding_size])
-        if self.encode_images and not training:
-            return h_o_post, image_model_outputs
+        if self.encode_images and not training and image_model_outputs is not None:
+            return h_o_post_pred, h_o_pre_pred, image_model_outputs
 
-        return h_o_post
+        return h_o_post_pred, h_o_pre_pred
 
     def calculate_avg_object_loss(
         self, objects: torch.Tensor, labels: torch.Tensor, eps=1e-12
@@ -231,16 +244,25 @@ class Piglet(pl.LightningModule):
 
         # the objects vector contains four dimensions (pre_0, pre_1, post_0, post_1)
         # here we select the labels for both objects post action
+        objects_labels_pre = objects[:, [0, 1], :]
         objects_labels_post = objects[:, [2, 3], :]
 
         # encode objects and actions, apply action, and predict resulting object attributes
-        h_o_post_ouput = self(
+        h_o_post_ouput, h_o_pre_ouput = self(
             objects, actions, action_text_inputs=action_text_inputs, image_inputs=images
         )
-        avg_loss, _ = self.calculate_object_attribute_loss_and_predictions(
+        avg_loss_post, _ = self.calculate_object_attribute_loss_and_predictions(
             h_o_post_ouput, objects_labels_post
         )
+        avg_loss_pre, _ = self.calculate_object_attribute_loss_and_predictions(
+            h_o_pre_ouput, objects_labels_pre
+        )
+        avg_loss = avg_loss_post + avg_loss_pre
+
         self.log("train/loss", avg_loss, batch_size=len(batch["objects"]))
+        self.log("train/loss_post", avg_loss_post, batch_size=len(batch["objects"]))
+        self.log("train/loss_pre", avg_loss_pre, batch_size=len(batch["objects"]))
+
         return avg_loss
 
     def process_inference_batch(
@@ -261,13 +283,13 @@ class Piglet(pl.LightningModule):
 
         # the objects vector containst four dimensions (pre_0, pre_1, post_0, post_1)
         objects_labels_pre = objects[:, [0, 1], :]
-
         # here we select the labels for both objects post action
         objects_labels_post = objects[:, [2, 3], :]
 
         # encode objects and actions, apply action, and predict resulting object attributes
+        image_outputs = None
         if images is not None:
-            h_o_post_ouput, image_outputs = self(
+            h_o_post_ouput, h_o_pre_ouput, image_outputs = self(
                 objects,
                 actions,
                 action_text_inputs=action_text_inputs,
@@ -275,14 +297,25 @@ class Piglet(pl.LightningModule):
                 training=False,
             )
         else:
-            h_o_post_ouput = self(
+            h_o_post_ouput, h_o_pre_ouput = self(
                 objects, actions, action_text_inputs=action_text_inputs
             )
 
-        avg_loss, predictions = self.calculate_object_attribute_loss_and_predictions(
+        (
+            avg_loss_post,
+            predictions,
+        ) = self.calculate_object_attribute_loss_and_predictions(
             h_o_post_ouput, objects_labels_post
         )
+        avg_loss_pre, _ = self.calculate_object_attribute_loss_and_predictions(
+            h_o_pre_ouput, objects_labels_pre
+        )
+        avg_loss = avg_loss_post + avg_loss_pre
+
         self.log(f"{split}/loss", avg_loss, batch_size=len(batch["objects"]))
+        self.log(f"{split}/loss_post", avg_loss_post, batch_size=len(batch["objects"]))
+        self.log(f"{split}/loss_pre", avg_loss_pre, batch_size=len(batch["objects"]))
+
         results: Dict[str, torch.Tensor] = {
             "predictions": predictions.cpu(),
             "objects_labels_pre": objects_labels_pre.cpu(),
@@ -292,10 +325,7 @@ class Piglet(pl.LightningModule):
 
         if batch_idx == 0 and images is not None and image_outputs is not None:
             results["images"] = images.cpu()
-            results["image_probas"] = image_outputs["probas"].cpu()
             results["image_bboxes"] = image_outputs["bboxes"].cpu()
-            results["image_indices"] = image_outputs["indices"].cpu()
-            results["image_diffs"] = image_outputs["diffs"].cpu()
             results["image_bbox_scores"] = image_outputs["bbox_scores"].cpu()
 
         return results
@@ -393,9 +423,8 @@ class Piglet(pl.LightningModule):
                 f"{split}/accuracy/action_level/{action_name}_accuracy", action_accuracy
             )
 
-            if "images" in outputs and not self.plotted_images:
-                self.plot_images(outputs)
-                self.plotted_images = True
+        if "images" in outputs and not self.plotted_images:
+            self.plot_images(outputs)
 
     def plot_images(
         self,
@@ -403,22 +432,18 @@ class Piglet(pl.LightningModule):
     ) -> None:
         images = outputs["images"]
         bboxes = outputs["image_bboxes"]
-        indices = outputs["image_indices"]
-        probas = outputs["image_probas"]
-        diff = outputs["image_diffs"]
         scores = outputs["image_bbox_scores"]
 
-        # Get the color map by name for mapping diff images
-        cm = plt.get_cmap("hot", lut=8)
+        images_to_log = []
+        boxes_to_log = []
+        captions_to_log = []
         for img_idx in range(0, images.shape[0], 2):
-
             # format bounding boxes for before image
             image_before = denormalize_image(images[img_idx]).permute(1, 2, 0).numpy()
             image_before_boxes = {"predictions": {"box_data": []}}
-            for bbox_idx, ((x_min, y_min, x_max, y_max), proba) in enumerate(
-                zip(bboxes[img_idx], probas[img_idx])
-            ):
-                box_id = proba.argmax().item()
+            for i, (x_min, y_min, x_max, y_max) in enumerate(bboxes[img_idx]):
+                obj1_score = scores[img_idx][0][i]
+                obj2_score = scores[img_idx][1][i]
                 box = {
                     "position": {
                         "minX": x_min.item(),
@@ -427,37 +452,22 @@ class Piglet(pl.LightningModule):
                         "maxY": y_max.item(),
                     },
                     "domain": "pixel",
-                    "class_id": box_id,
-                    "box_caption": self.image_encoder.image_model.config.id2label[
-                        box_id
-                    ],
+                    "class_id": i,
                     "scores": {
-                        "chosen": 1.0 if bbox_idx in indices[img_idx] else 0.0,
-                        "confidence": proba.max().item(),
-                        "overlap": scores[img_idx][bbox_idx].item(),
+                        "obj_1_score": obj1_score.item(),
+                        "obj_2_score": obj2_score.item(),
                     },
                 }
                 image_before_boxes["predictions"]["box_data"].append(box)
-
-            # draw image diff using matplotlib for nice 'hot' gradient
-            d = diff[img_idx].permute(1, 2, 0).squeeze(-1)  # permute to (W,H,C)
-            d = (d - d.min()) / (d.max() - d.min())  # normalize
-            colored_image = cm(d.numpy())
-            # Obtain a 4-channel image (R,G,B,A) in float [0, 1]
-            # But we want to convert to RGB in uint8 and save it:
-            image_diff = Image.fromarray(
-                (colored_image[:, :, :3] * 255).astype(np.uint8)
-            )
 
             # format bounding boxes for after image
             image_after = (
                 denormalize_image(images[img_idx + 1]).permute(1, 2, 0).numpy()
             )
             image_after_boxes = {"predictions": {"box_data": []}}
-            for bbox_idx, ((x_min, y_min, x_max, y_max), proba) in enumerate(
-                zip(bboxes[img_idx + 1], probas[img_idx + 1])
-            ):
-                box_id = proba.argmax().item()
+            for i, (x_min, y_min, x_max, y_max) in enumerate(bboxes[img_idx + 1]):
+                obj1_score = scores[img_idx + 1][0][i]
+                obj2_score = scores[img_idx + 1][1][i]
                 box = {
                     "position": {
                         "minX": x_min.item(),
@@ -466,14 +476,10 @@ class Piglet(pl.LightningModule):
                         "maxY": y_max.item(),
                     },
                     "domain": "pixel",
-                    "class_id": box_id,
-                    "box_caption": self.image_encoder.image_model.config.id2label[
-                        box_id
-                    ],
+                    "class_id": i,
                     "scores": {
-                        "chosen": 1.0 if bbox_idx in indices[img_idx + 1] else 0.0,
-                        "confidence": proba.max().item(),
-                        "overlap": scores[img_idx + 1][bbox_idx].item(),
+                        "obj_1_score": obj1_score.item(),
+                        "obj_2_score": obj2_score.item(),
                     },
                 }
                 image_after_boxes["predictions"]["box_data"].append(box)
@@ -482,16 +488,16 @@ class Piglet(pl.LightningModule):
                 outputs["actions"], outputs["objects_labels_pre"], img_idx
             )
 
-            self.logger.log_image(
-                f"images",
-                [image_before, image_diff, image_after],
-                boxes=[
-                    image_before_boxes,
-                    {"predictions": {"box_data": []}},
-                    image_after_boxes,
-                ],
-                caption=["before", title, "after"],
-            )
+            images_to_log += [image_before, image_after]
+            boxes_to_log += [image_before_boxes, image_after_boxes]
+            captions_to_log += [f"Before: {title}", f"After: {title}"]
+
+        self.logger.log_image(
+            f"images",
+            images_to_log,
+            boxes=boxes_to_log,
+            caption=captions_to_log,
+        )
 
     def validation_step(self, batch, batch_idx) -> Dict[str, torch.Tensor]:
         return self.process_inference_batch(batch, batch_idx, split="val")

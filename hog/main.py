@@ -16,13 +16,13 @@ cs.store(name="base_config", node=HogConfig)
 
 
 @hydra.main(config_path="conf", config_name="config")
-def main(cfg: HogConfig)->None:
+def main(cfg: HogConfig) -> None:
     print(OmegaConf.to_yaml(cfg))
 
     seed_everything(cfg.seed)
 
     wandb_logger = WandbLogger(
-        name=f"{cfg.pretrain.job_type}_{cfg.seed}_img{cfg.images}",
+        name=f"{cfg.pretrain.job_type}_{cfg.seed}_img{cfg.images}_+SKIPIMAGES",
         project="hog",
         entity="itl",
         job_type=cfg.pretrain.job_type,
@@ -34,7 +34,9 @@ def main(cfg: HogConfig)->None:
 
     print("Loading dataset")
     pigpen = PigPenDataModule(
-        data_dir_path=cfg.paths.input_dir, batch_size=cfg.pretrain.batch_size, images=cfg.images
+        data_dir_path=cfg.paths.input_dir,
+        batch_size=cfg.pretrain.batch_size,
+        images=cfg.images,
     )
 
     print("Creating Model")
@@ -52,14 +54,14 @@ def main(cfg: HogConfig)->None:
     checkpoint_callback = ModelCheckpoint(
         monitor="val/loss", dirpath=f"{cfg.paths.output_dir}/checkpoints/{run_name}"
     )
-    
+
     trainer = pl.Trainer(
         max_epochs=cfg.pretrain.max_epochs,
         logger=wandb_logger,
         gpus=cfg.gpus,
         callbacks=[checkpoint_callback],
         val_check_interval=0.1,  # check val 10x per epoch
-        fast_dev_run=cfg.fast
+        fast_dev_run=cfg.fast,
     )
 
     print("Training...")
@@ -115,4 +117,3 @@ def main(cfg: HogConfig)->None:
 
 if __name__ == "__main__":
     main()
-    

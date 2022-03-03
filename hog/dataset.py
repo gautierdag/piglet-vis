@@ -37,6 +37,7 @@ class PigPenDataset(Dataset):
         images=False,
         annotations=False,
         randomise_annotations=False,
+        indices=False,
     ):
         """
         Args:
@@ -51,6 +52,7 @@ class PigPenDataset(Dataset):
         self.images = images
         self.annotations = annotations
         self.randomise_annotations = randomise_annotations
+        self.indices = indices
 
         self.action_matrix = np.load(f"{data_dir_path}/actions_{data_split}.npy")
         self.objects_matrix = np.load(f"{data_dir_path}/objects_{data_split}.npy")
@@ -116,6 +118,8 @@ class PigPenDataset(Dataset):
             item["postcondition_text"] = self.postcondition_text[index][
                 annotation_index
             ]
+        if self.indices:
+            item["indices"] = torch.tensor(self.image_indices[index])
 
         return item
 
@@ -184,6 +188,7 @@ class PigPenDataModule(pl.LightningDataModule):
         randomise_annotations=False,
         bert_model: str = "roberta-base",
         vision_model: str = "detr",
+        indices=False,
         num_workers=4,
     ):
         super().__init__()
@@ -196,6 +201,7 @@ class PigPenDataModule(pl.LightningDataModule):
         self.bert_model = bert_model
         self.vision_model = vision_model
         self.num_workers = num_workers
+        self.indices = indices
 
     def setup(self, stage: Optional[str] = None):
         """
@@ -208,6 +214,7 @@ class PigPenDataModule(pl.LightningDataModule):
             images=self.images,
             annotations=self.annotations,
             randomise_annotations=self.randomise_annotations,
+            indices=self.indices,
         )
         self.pigpen_val = PigPenDataset(
             data_dir_path=self.data_dir_path,
@@ -215,6 +222,7 @@ class PigPenDataModule(pl.LightningDataModule):
             images=self.images,
             annotations=self.annotations,
             randomise_annotations=self.randomise_annotations,
+            indices=self.indices,
         )
         self.collate_fn = None
         tokenizer = None

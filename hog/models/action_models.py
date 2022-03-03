@@ -1,8 +1,9 @@
 from collections import OrderedDict
-from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
+from einops import rearrange
+from torchtyping import TensorType
 from transformers import AutoModel
 
 
@@ -29,21 +30,14 @@ class PigletSymbolicActionEncoder(nn.Module):
         self.action_encoder = nn.Sequential(action_encoder_layers)
 
     def forward(
-        self, action: torch.Tensor, action_args_embeddings: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Args:
-            action: [batch_size, 1]
-            action_args_embedding: [batch_size, hidden_size]
-        Returns:
-            h_a: [batch_size, hidden_size]
-        """
-
+        self,
+        action: TensorType["batch_size", 1],
+        action_args_embeddings: TensorType["batch_size", "hidden_size"],
+    ) -> TensorType["batch_size", "hidden_size"]:
         # embed the action vector
         action_embedding = self.action_embedding_layer(action)
         # combine with object representation of arguments
         h_a = self.action_encoder(action_embedding + action_args_embeddings)
-
         return h_a
 
 
@@ -66,16 +60,9 @@ class PigletAnnotatedActionEncoder(nn.Module):
 
     def forward(
         self,
-        action_text_input_ids: torch.Tensor,
-        action_text_attention_mask: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Args:
-            action_text_input_ids: [batch_size, N]
-            action_text_attention_mask: [batch_size, N]
-        Returns:
-            h_a: [batch_size, hidden_size]
-        """
+        action_text_input_ids: TensorType["batch_size", "max_action_length"],
+        action_text_attention_mask: TensorType["batch_size", "max_action_length"],
+    ) -> TensorType["batch_size", "hidden_size"]:
         bert_outputs = self.bert_model(
             action_text_input_ids, attention_mask=action_text_attention_mask
         )
@@ -91,16 +78,14 @@ class PigletActionApplyModel(nn.Module):
         hidden_size=256,
         num_layers=3,
         dropout=0.1,
-        input_fuse_size=768,
     ):
         super().__init__()
         self.hidden_size = hidden_size
         self.dropout = dropout
         self.num_layers = num_layers
-        self.input_fuse_size = input_fuse_size
 
         # Action Apply Model
-        self.fuse_action_object = nn.Linear(input_fuse_size, hidden_size)
+        self.fuse_action_object = nn.Linear(hidden_size * 3, hidden_size)
         action_apply_layers = OrderedDict()
         for l in range(num_layers):
             action_apply_layers[f"dropout_{l}"] = nn.Dropout(dropout)
@@ -109,17 +94,14 @@ class PigletActionApplyModel(nn.Module):
         self.action_apply_layers = nn.Sequential(action_apply_layers)
 
     def forward(
-        self, h_o: torch.Tensor, h_a: torch.Tensor, h_i: Optional[torch.Tensor] = None
-    ) -> torch.Tensor:
-        """
-        Args:
-            h_o: [batch_size, hidden_size*2]
-            h_a: [batch_size, hidden_size]
-            h_i: [batch_size, hidden_size]
-        Returns:
-            h_o_a: [batch_size, hidden_size]
+        self,
+        h_o: TensorType["batch_size", "num_objects", "hidden_size"],
+        h_a: TensorType["batch_size", "hidden_size"],
+    ) -> TensorType["batch_size", "hidden_size"]:
 
-        """
+        # concat h_o_0 and h_o_1
+        h_o = rearrange(h_o, "b o h -> b (o h)")
+
         # concat the two encoded objects with encoded action
         h_o_a = torch.concat((h_o, h_a), dim=1)
 

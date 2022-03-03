@@ -3,7 +3,8 @@ from typing import Dict
 import torch
 import torch.nn as nn
 import torchvision
-from einops import rearrange, reduce, repeat
+from einops import rearrange, repeat
+from torchtyping import TensorType
 from transformers import DetrForObjectDetection
 
 
@@ -15,7 +16,6 @@ class PigletImageEncoder(nn.Module):
         output_dir_path="output",
         width=640,
         height=384,
-        num_objects=2,
     ):
         super().__init__()
         # load backbone model
@@ -25,8 +25,6 @@ class PigletImageEncoder(nn.Module):
         # for simplicity we save these dimensions for rescaling purposes
         self.width = width
         self.heigth = height
-
-        self.num_objects = num_objects
 
         if image_model_name == "detr":
             self.image_model = DetrForObjectDetection.from_pretrained(
@@ -46,11 +44,17 @@ class PigletImageEncoder(nn.Module):
         for param in self.image_model.parameters():
             param.requires_grad = False
 
-        # change last layer
+        # encode conditional action and object names
+        self.conditional_fc = nn.Linear(
+            hidden_size * 2, self.image_model.config.d_model
+        )
+        # map to smaller dimensionality
         self.fc = nn.Linear(self.image_model.config.d_model, hidden_size)
 
     @staticmethod
-    def bboxes_to_mask(bboxes: torch.Tensor, height=384, width=640) -> torch.Tensor:
+    def bboxes_to_mask(
+        bboxes: TensorType["batch_size", "N", 4], height=384, width=640
+    ) -> TensorType["batch_size", "N", "H", "W"]:
         """
         Args:
             bboxes: [batch_size, N, 4] in [x_min y_min x_max y_max] format
@@ -63,7 +67,9 @@ class PigletImageEncoder(nn.Module):
 
         x = torch.arange(0, height, dtype=torch.float, device=bboxes.device)
         y = torch.arange(0, width, dtype=torch.float, device=bboxes.device)
-        y, x = torch.meshgrid(x, y, indexing="ij") # this looks like a mistake but this is not a mistake
+        y, x = torch.meshgrid(
+            x, y, indexing="ij"
+        )  # this looks like a mistake but this is not a mistake
 
         y = repeat(y, "h w -> h w b n", n=N, b=batch_size)
         x = repeat(x, "h w -> h w b n", n=N, b=batch_size)
@@ -77,68 +83,46 @@ class PigletImageEncoder(nn.Module):
         masks = rearrange(masks, "h w b n -> b n h w")
         return masks
 
-    def forward(self, images: torch.Tensor, training=True) -> Dict[str, torch.Tensor]:
+    def forward(
+        self,
+        images: TensorType["batch_images", "channel", "height", "width"],
+        conditional_vector: TensorType["batch", "num_objects", "hidden_size"],
+        training=True,
+    ) -> Dict[str, torch.Tensor]:
         """
         Args:
             images: [batch_size*2, C, W, H]
             training: (default: True), if False we also return the bboxes, indices, and probas to plot
         Returns:
-            h_i: [batch_size*2, hidden_size]
-            probas: [batch_size*2, N, K]
+            h_i_o: [batch_size, 4, hidden_size]
             bboxes: [batch_size*2, N, 4]
-            indices: [batch_size*2, N]
-            image_diffs: [batch_size*2*2, 1, W, H]
+            bbox_scores: [batch_size*2, 2, N]
         """
         outputs = self.image_model(pixel_values=images)
-        # softmax over labels to get probabilities per class for each bounding box
-        probas = outputs.logits.softmax(-1)[:, :, :-1]
 
         # convert bounding boxes from cx cy w h to x y x y
         bboxes = torchvision.ops.box_convert(outputs.pred_boxes, "cxcywh", "xyxy")
         bboxes = (bboxes * self.img_dims).int()
 
-        # convert bboxes to img masks
-        masks = self.bboxes_to_mask(bboxes)
+        h_c = self.conditional_fc(conditional_vector)
+        h_c = rearrange(h_c, "b (i o) h -> b i o 1 h", i=2, o=2)
+        h_i = rearrange(outputs.last_hidden_state, "(b i) n h -> b i 1 n h", i=2, n=100)
 
-        # calculate pixel wise difference between pre-action and post action image
-        image_diffs = (
-            reduce(images, "(b i) c h w -> b i h w", "sum", i=2, c=3).diff(dim=1).abs()
-        )
-        image_diffs = repeat(image_diffs, "b i h w -> (b i 2) 1 h w", i=1)
-
-        # calculate IOU between bounding boxes and segmentation mask of changed pixels
-        bbox_intersection = reduce(masks *  (image_diffs > 0), "b n h w -> b n", "sum")
-        bbox_union = reduce(masks |  (image_diffs > 0), "b n h w -> b n", "sum")
-
-        # filter out low confidence bounding boxes based on threshold
-        # scores =  (bbox_scores * self.K).softmax(-1)  + probas.max(-1).values
-        bbox_scores = bbox_intersection / bbox_union
-
-        # select the top num_objects bounding boxes based on scores
-        indices = torch.topk(bbox_scores, k=self.num_objects)[1]
-
-        # select hidden states for the top num_objects bounding boxes
-        h_i = outputs.last_hidden_state[
-            torch.arange(images.shape[0]).unsqueeze(1), indices, :
-        ]
+        attention_scores = (
+            (h_c * h_i).sum(-1).softmax(-1).unsqueeze(-1)
+        )  # [b, i, o, n, 1]
+        h_i_o = (h_i * attention_scores).sum(3)  # [b, i, o, h]
 
         # map to lower dimension
-        h_i = self.fc(h_i)
+        h_i_o = self.fc(h_i_o)
+        h_i_o = rearrange(h_i_o, "b i o h -> b (i o) h ", i=2, o=2)
 
-        # separate the pre action and post action images across a dimension
-        h_i = rearrange(h_i, "(b i) o h -> b i o h", o=self.num_objects, i=2)
-
-        h_i_pre_action = h_i[:, 0]
-        h_i_post_action = h_i[:, 1]
-
-        output = {"h_i_pre_action": h_i_pre_action, "h_i_post_action": h_i_post_action}
+        output = {"h_i_o": h_i_o}
         if training:
             return output
 
-        output["probas"] = probas
         output["bboxes"] = bboxes
-        output["indices"] = indices
-        output["diffs"] = image_diffs
-        output["bbox_scores"] = bbox_scores
-
+        output["bbox_scores"] = rearrange(
+            attention_scores, "b i o n 1 -> (b i) o n", i=2, o=2
+        )
         return output

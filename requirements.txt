@@ -6,3 +6,6 @@ wandb
 black
 timm
 hydra
+torchtyping
+transformers
+einops

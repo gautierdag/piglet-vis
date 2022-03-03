@@ -1,9 +1,10 @@
 import pickle
-from typing import Tuple
 
 import torch
 import torch.nn as nn
 from einops import rearrange, repeat
+from einops.layers.torch import Rearrange
+from torchtyping import TensorType
 
 
 class PigletObjectEncoder(nn.Module):
@@ -38,21 +39,13 @@ class PigletObjectEncoder(nn.Module):
         )
         self.activation = nn.Tanh()
 
-    def forward(self, object_inputs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Args:
-            object_inputs: [batch_size, 4, num_attributes]
-        Returns:
-            h_o: [batch_size*2, hidden_size]
-            object_embeddings: [batch_size*2, num_attributes, hidden_size]
-        """
+    def forward(
+        self, object_inputs: TensorType["batch_size", 4, "num_attributes"]
+    ) -> TensorType["batch_size", 4, "hidden_size"]:
         # always four "objects" per example 2 before and 2 after
         assert object_inputs.shape[1] == 4
         # consitent number of object attributes
         assert object_inputs.shape[2] == self.num_attributes
-
-        # select only the pre action objects
-        object_inputs = object_inputs[:, [0, 1], :]
 
         # embed object vector
         object_embeddings = self.object_embedding_layer(object_inputs)
@@ -72,7 +65,14 @@ class PigletObjectEncoder(nn.Module):
         # to the first token.
         h_o = self.activation(h_o[:, 0])
 
-        return h_o, object_embeddings
+        h_o = rearrange(
+            h_o,
+            "(b o) h -> b o h",
+            o=4,
+            h=self.hidden_size,
+        )
+
+        return h_o
 
 
 class PigletObjectDecoder(nn.Module):
@@ -99,9 +99,7 @@ class PigletObjectDecoder(nn.Module):
         # mask for embedding layer output -> based on position
         # mask probability to 0 for other attributes when looking at a specific attribute
         # This is needed because we are using a single embedding layer for all object attributes
-        reverse_object_mapper_path = (
-            f"{data_dir_path}/reverse_object_mapping.pkl"
-        )
+        reverse_object_mapper_path = f"{data_dir_path}/reverse_object_mapping.pkl"
         with open(reverse_object_mapper_path, "rb") as f:
             self.reverse_object_mapper = pickle.load(f)
         indexes = torch.tensor(
@@ -115,26 +113,34 @@ class PigletObjectDecoder(nn.Module):
         mask_embedding_layer[indexes[:, 0], indexes[:, 1]] = 1
         self.register_buffer("mask_embedding_layer", mask_embedding_layer)
 
-        # Object Decoder
+        self.activation = nn.Tanh()
+
+        self.object_h_to_attributes = nn.Sequential(
+            nn.Linear(hidden_size, self.num_attributes * hidden_size),
+            Rearrange(
+                "b o (a h) -> (b o) a h", a=self.num_attributes, h=hidden_size, o=2
+            ),
+            self.activation,
+        )
+
         decoder_layer = nn.TransformerDecoderLayer(
             d_model=hidden_size, nhead=num_heads, dropout=dropout, batch_first=True
         )
         self.object_decoder_transformer = nn.TransformerDecoder(
             decoder_layer, num_layers=num_layers
         )
-        self.activation = nn.Tanh()
+
         self.object_decoder_output_layer = nn.Linear(hidden_size, object_embedding_size)
 
     def forward(
-        self, h_o_a: torch.Tensor, object_embeddings: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Args:
-            h_o_a: [batch_size, hidden_size]
-            object_embeddings: [batch_size*2, num_attributes, hidden_size]
-        Returns:
-            h_a: [batch_size, hidden_size]
-        """
+        self,
+        h_o_a: TensorType["batch_size", "hidden_size"],
+        h_o: TensorType["batch_size", 2, "hidden_size"],
+    ) -> TensorType["batch_object_size", "num_attributes", "embedding_dim"]:
+
+        # extract an object embedding for each object
+        object_embeddings = self.object_h_to_attributes(h_o)
+
         # expand the fused action/object_pre representation to apply to both objects
         h_o_a = repeat(h_o_a, "b h -> (b 2) 1 h")
 
@@ -147,7 +153,10 @@ class PigletObjectDecoder(nn.Module):
 
         return h_o_post
 
-    def mask_output_probabilities(self, h_o_post: torch.Tensor) -> torch.Tensor:
+    def mask_output_probabilities(
+        self,
+        h_o_post: TensorType["batch_object_size", "num_attributes", "embedding_dim"],
+    ) -> TensorType["batch_object_size", "num_attributes", "embedding_dim"]:
         """
         Since we use a single embedding matrix for all attributes we need to mask the output probabilities
         of the embedding layer to -inf for all unnattainable attributes at given position.
