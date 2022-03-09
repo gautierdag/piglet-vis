@@ -1,20 +1,21 @@
 from collections import defaultdict
 from typing import Dict, Tuple
 
-import matplotlib.pyplot as plt
-import numpy as np
 import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
-from dataset import denormalize_image
 from einops import rearrange, repeat
-from PIL import Image
-from torchtyping import TensorType
 
 from .action_models import (
     PigletActionApplyModel,
     PigletAnnotatedActionEncoder,
     PigletSymbolicActionEncoder,
+)
+from .analysis import (
+    calculate_average_accuracy,
+    calculate_average_attribute_accuracy,
+    calculate_diff_accuracy,
+    plot_images,
 )
 from .image_models import PigletImageEncoder
 from .mappings import OBJECT_ATTRIBUTES, get_actions_mapper, get_objects_mapper
@@ -358,146 +359,56 @@ class Piglet(pl.LightningModule):
                 ).reshape(-1, outputs[output_name][0].shape[-1])
 
         # ignore None objects - ignore where label of object is none_object_index
-        ignore_mask = outputs["objects_labels_pre"][:, 0] != self.none_object_index
+        selection_mask = outputs["objects_labels_pre"][:, 0] != self.none_object_index
 
         # accuracy when every attribute is guessed correctly
-        num_objects = ignore_mask.shape[0]
-        average_accuracy = (
-            (outputs["predictions"] == outputs["objects_labels_post"]).sum(1)[
-                ignore_mask
-            ]
-            == self.num_attributes
-        ).sum() / num_objects
+        average_accuracy = calculate_average_accuracy(
+            outputs["predictions"], outputs["objects_labels_post"], selection_mask
+        )
         self.log(f"{split}/accuracy/average_accuracy", average_accuracy, prog_bar=True)
 
         # calculate accuracy per attribute
-        average_attribute_accuracy = (
-            outputs["predictions"] == outputs["objects_labels_post"]
-        )[ignore_mask].sum(0) / num_objects
-        # log accuracy per attribute
+        average_attribute_accuracy = calculate_average_attribute_accuracy(
+            outputs["predictions"], outputs["objects_labels_post"], selection_mask
+        )
         for acc, object_attribute_name in zip(
             average_attribute_accuracy, OBJECT_ATTRIBUTES
         ):
             self.log(f"{split}/accuracy/attribute_level/{object_attribute_name}", acc)
-        # log average overall accuracy
         self.log(
             f"{split}/accuracy/average_attribute_accuracy",
             average_attribute_accuracy.mean(),
         )
 
         # log accuracy of attributes that have changed
-        diff = outputs["objects_labels_post"] != outputs["objects_labels_pre"]
-        diff_accuracy = 0
-        if diff.sum() > 0:
-            diff_accuracy = (
-                outputs["predictions"][diff] == outputs["objects_labels_post"][diff]
-            ).sum() / diff.sum()
+        diff_accuracy = calculate_diff_accuracy(
+            outputs["predictions"],
+            outputs["objects_labels_pre"],
+            outputs["objects_labels_post"],
+        )
         self.log(f"{split}/accuracy/diff_accuracy", diff_accuracy)
 
         # log accuracy of actions
-        num_examples = outputs["actions"].shape[0]
         for action_index, action_name in self.action_idx_to_name.items():
             action_mask = outputs["actions"][:, 0] == action_index
-            num_examples_with_action = action_mask.sum()
-            if num_examples_with_action > 0:
-                preds = (
-                    outputs["predictions"]
-                    .reshape(num_examples, 2, -1)[action_mask]
-                    .reshape(num_examples_with_action * 2, -1)
-                )
-                labels = (
-                    outputs["objects_labels_post"]
-                    .reshape(num_examples, 2, -1)[action_mask]
-                    .reshape(num_examples_with_action * 2, -1)
-                )
-                ignore_mask = labels[:, 0] != self.none_object_index
-                n = ignore_mask.sum()
-                action_accuracy = (
-                    (preds[ignore_mask] == labels[ignore_mask]).sum(1)
-                    == self.num_attributes
-                ).sum() / n
-            else:
-                action_accuracy = torch.tensor(0, dtype=torch.float)
-
+            action_mask = repeat(action_mask, "b -> (b 2)") & selection_mask
+            action_accuracy = calculate_average_accuracy(
+                outputs["predictions"], outputs["objects_labels_post"], action_mask
+            )
             self.log(
                 f"{split}/accuracy/action_level/{action_name}_accuracy", action_accuracy
             )
 
         if "images" in outputs and not self.plotted_images:
-            self.plot_images(outputs)
-
-    def plot_images(
-        self,
-        outputs: Dict[str, torch.Tensor],
-    ) -> None:
-        images = outputs["images"]
-        bboxes = outputs["image_bboxes"]
-        scores = outputs["image_bbox_scores"]
-
-        images_to_log = []
-        boxes_to_log = []
-        captions_to_log = []
-        for img_idx in range(0, images.shape[0], 2):
-            # format bounding boxes for before image
-            image_before = denormalize_image(images[img_idx]).permute(1, 2, 0).numpy()
-            image_before_boxes = {"predictions": {"box_data": []}}
-            for i, (x_min, y_min, x_max, y_max) in enumerate(bboxes[img_idx]):
-                obj1_score = scores[img_idx][0][i]
-                obj2_score = scores[img_idx][1][i]
-                box = {
-                    "position": {
-                        "minX": x_min.item(),
-                        "maxX": x_max.item(),
-                        "minY": y_min.item(),
-                        "maxY": y_max.item(),
-                    },
-                    "domain": "pixel",
-                    "class_id": i,
-                    "scores": {
-                        "obj_1_score": obj1_score.item(),
-                        "obj_2_score": obj2_score.item(),
-                    },
-                }
-                image_before_boxes["predictions"]["box_data"].append(box)
-
-            # format bounding boxes for after image
-            image_after = (
-                denormalize_image(images[img_idx + 1]).permute(1, 2, 0).numpy()
+            images_to_log, boxes_to_log, captions_to_log = plot_images(
+                outputs, self.action_idx_to_name, self.object_idx_to_name
             )
-            image_after_boxes = {"predictions": {"box_data": []}}
-            for i, (x_min, y_min, x_max, y_max) in enumerate(bboxes[img_idx + 1]):
-                obj1_score = scores[img_idx + 1][0][i]
-                obj2_score = scores[img_idx + 1][1][i]
-                box = {
-                    "position": {
-                        "minX": x_min.item(),
-                        "maxX": x_max.item(),
-                        "minY": y_min.item(),
-                        "maxY": y_max.item(),
-                    },
-                    "domain": "pixel",
-                    "class_id": i,
-                    "scores": {
-                        "obj_1_score": obj1_score.item(),
-                        "obj_2_score": obj2_score.item(),
-                    },
-                }
-                image_after_boxes["predictions"]["box_data"].append(box)
-
-            title = self.get_example_title_from_actions_object(
-                outputs["actions"], outputs["objects_labels_pre"], img_idx
+            self.logger.log_image(
+                f"images",
+                images_to_log,
+                boxes=boxes_to_log,
+                caption=captions_to_log,
             )
-
-            images_to_log += [image_before, image_after]
-            boxes_to_log += [image_before_boxes, image_after_boxes]
-            captions_to_log += [f"Before: {title}", f"After: {title}"]
-
-        self.logger.log_image(
-            f"images",
-            images_to_log,
-            boxes=boxes_to_log,
-            caption=captions_to_log,
-        )
 
     def validation_step(self, batch, batch_idx) -> Dict[str, torch.Tensor]:
         return self.process_inference_batch(batch, batch_idx, split="val")
@@ -514,19 +425,3 @@ class Piglet(pl.LightningModule):
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
         return torch.optim.Adam(self.parameters(), lr=self.learning_rate)
-
-    def get_example_title_from_actions_object(
-        self, actions, objects, index: int
-    ) -> str:
-        """
-        Actions: [B x 3]
-        Object: [B x 2, num_attributes]
-        """
-        assert 0 <= index < objects.shape[0] - 1
-
-        action_text = self.action_idx_to_name[actions[int(index / 2)][0].item()]
-        action_object = self.object_idx_to_name[actions[int(index / 2)][1].item()]
-        action_receptacle = self.object_idx_to_name[actions[int(index / 2)][2].item()]
-        object_1 = self.object_idx_to_name[objects[index][0].item()]
-        object_2 = self.object_idx_to_name[objects[index + 1][0].item()]
-        return f"Effects of {action_text}({action_object}, {action_receptacle}) on ({object_1},{object_2})"
