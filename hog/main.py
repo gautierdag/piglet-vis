@@ -52,7 +52,7 @@ def main(cfg: HogConfig) -> None:
 
     print("Creating Trainer")
     checkpoint_callback = ModelCheckpoint(
-        monitor="val/loss", dirpath=f"{cfg.paths.output_dir}/checkpoints/{run_name}"
+        monitor="val_loss", dirpath=f"{cfg.paths.output_dir}/checkpoints/{run_name}"
     )
 
     trainer = pl.Trainer(
@@ -87,7 +87,7 @@ def main(cfg: HogConfig) -> None:
     )
 
     checkpoint_callback = ModelCheckpoint(
-        monitor="val/loss", dirpath=f"{cfg.paths.output_dir}/checkpoints/{run_name}"
+        monitor="val_loss", dirpath=f"{cfg.paths.output_dir}/checkpoints/{run_name}"
     )
 
     wandb_logger = WandbLogger(

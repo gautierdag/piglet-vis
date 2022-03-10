@@ -40,12 +40,11 @@ class PigletObjectEncoder(nn.Module):
         self.activation = nn.Tanh()
 
     def forward(
-        self, object_inputs: TensorType["batch_size", 4, "num_attributes"]
-    ) -> TensorType["batch_size", 4, "hidden_size"]:
-        # always four "objects" per example 2 before and 2 after
-        assert object_inputs.shape[1] == 4
+        self, object_inputs: TensorType["batch_size", "num_objects", "num_attributes"]
+    ) -> TensorType["batch_size", "num_objects", "hidden_size"]:
         # consitent number of object attributes
         assert object_inputs.shape[2] == self.num_attributes
+        num_objects = object_inputs.shape[1]
 
         # embed object vector
         object_embeddings = self.object_embedding_layer(object_inputs)
@@ -68,7 +67,7 @@ class PigletObjectEncoder(nn.Module):
         h_o = rearrange(
             h_o,
             "(b o) h -> b o h",
-            o=4,
+            o=num_objects,
             h=self.hidden_size,
         )
 

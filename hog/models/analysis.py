@@ -108,10 +108,9 @@ def calculate_average_attribute_accuracy(
     labels: TensorType["batch", "num_attributes"],
     selection_mask: TensorType["batch"],
 ) -> TensorType["num_attributes"]:
-    num_objects = predictions.shape[0]
     average_attribute_accuracy = (predictions == labels)[selection_mask].sum(
         0
-    ) / num_objects
+    ) / selection_mask.sum()
     return average_attribute_accuracy
 
 
@@ -140,7 +139,7 @@ def log_action_accuracies(
         action_mask = actions[:, 0] == action_index
         action_mask = repeat(action_mask, "b -> (b 2)") & selection_mask
         action_accuracy = calculate_average_accuracy(predictions, labels, action_mask)
-        logger(f"{split}/accuracy/action_level/{action_name}_accuracy", action_accuracy)
+        logger(f"Action Accuracy/{split}_{action_name}_accuracy", action_accuracy)
 
 
 def log_average_attribute_accuracy(
@@ -156,9 +155,9 @@ def log_average_attribute_accuracy(
     for acc, object_attribute_name in zip(
         average_attribute_accuracy, OBJECT_ATTRIBUTES
     ):
-        logger(f"{split}/accuracy/attribute_level/{object_attribute_name}", acc)
+        logger(f"Attribute Accuracy/{split}_{object_attribute_name}_accuracy", acc)
     logger(
-        f"{split}/accuracy/average_attribute_accuracy",
+        f"Attribute Accuracy/{split}_average_attribute_accuracy",
         average_attribute_accuracy.mean(),
     )
 
@@ -186,7 +185,9 @@ def log_confusion_matrices(
             y_true=labels[:, idx].numpy() - min_idx,
             class_names=class_names,
         )
-        logger({f"{split}/{object_attribute_name}": confusion_matrix})
+        logger(
+            {f"Confusion Matrices/{split}_{object_attribute_name}": confusion_matrix}
+        )
 
 
 def log_attribute_level_error_rates(
@@ -204,4 +205,4 @@ def log_attribute_level_error_rates(
     bar_chart = wandb.plot.bar(
         table, "attribute", "error_rate", title="Attribute Level Error Rates"
     )
-    logger({f"{split}/attribute_level_error_rate": bar_chart})
+    logger({f"Attribute Errors/{split}_attribute_level_error_rate": bar_chart})
