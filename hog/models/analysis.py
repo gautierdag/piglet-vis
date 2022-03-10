@@ -1,8 +1,12 @@
 from typing import Dict, Tuple
 
 import torch
+import wandb
 from dataset import denormalize_image
+from einops import repeat
 from torchtyping import TensorType
+
+from .mappings import OBJECT_ATTRIBUTES
 
 
 def generate_wandb_bounding_boxes(
@@ -119,3 +123,83 @@ def calculate_diff_accuracy(
     if diff.sum() > 0:
         diff_accuracy = (predictions[diff] == labels_post[diff]).sum() / diff.sum()
     return diff_accuracy
+
+
+def log_action_accuracies(
+    logger,
+    action_idx_to_name: dict,
+    actions: TensorType["batch_examples", "action_args"],
+    predictions: TensorType["batch", "num_attributes"],
+    labels: TensorType["batch", "num_attributes"],
+    selection_mask: TensorType["batch"],
+    split="val",
+) -> None:
+    for action_index, action_name in action_idx_to_name.items():
+        action_mask = actions[:, 0] == action_index
+        action_mask = repeat(action_mask, "b -> (b 2)") & selection_mask
+        action_accuracy = calculate_average_accuracy(predictions, labels, action_mask)
+        logger(f"{split}/accuracy/action_level/{action_name}_accuracy", action_accuracy)
+
+
+def log_average_attribute_accuracy(
+    logger,
+    predictions: TensorType["batch", "num_attributes"],
+    labels: TensorType["batch", "num_attributes"],
+    selection_mask: TensorType["batch"],
+    split="val",
+) -> None:
+    average_attribute_accuracy = calculate_average_attribute_accuracy(
+        predictions, labels, selection_mask
+    )
+    for acc, object_attribute_name in zip(
+        average_attribute_accuracy, OBJECT_ATTRIBUTES
+    ):
+        logger(f"{split}/accuracy/attribute_level/{object_attribute_name}", acc)
+    logger(
+        f"{split}/accuracy/average_attribute_accuracy",
+        average_attribute_accuracy.mean(),
+    )
+
+
+def log_confusion_matrices(
+    logger,
+    object_mapper,
+    predictions: TensorType["batch", "num_attributes"],
+    labels_post: TensorType["batch", "num_attributes"],
+    selection_mask: TensorType["batch"],
+    split="val",
+):
+    preds = predictions[selection_mask]
+    labels = labels_post[selection_mask]
+    for idx, object_attribute_name in enumerate(OBJECT_ATTRIBUTES):
+        # skip long confusion matrices
+        if len(list(object_mapper[idx].values())) > 10:
+            continue
+
+        min_idx = list(object_mapper[idx].keys())[0]
+        class_names = list(object_mapper[idx].values())
+        confusion_matrix = wandb.plot.confusion_matrix(
+            title=f"Confusion Matrix for {object_attribute_name}",
+            preds=preds[:, idx].numpy() - min_idx,
+            y_true=labels[:, idx].numpy() - min_idx,
+            class_names=class_names,
+        )
+        logger({f"{split}/{object_attribute_name}": confusion_matrix})
+
+
+def log_attribute_level_error_rates(
+    logger,
+    predictions: TensorType["batch", "num_attributes"],
+    labels_post: TensorType["batch", "num_attributes"],
+    selection_mask: TensorType["batch"],
+    split="val",
+):
+    preds = predictions[selection_mask]
+    labels = labels_post[selection_mask]
+    values = (preds != labels).sum(0) / preds.shape[0]
+    data = [[att, val] for (att, val) in zip(OBJECT_ATTRIBUTES, values)]
+    table = wandb.Table(data=data, columns=["attribute", "error_rate"])
+    bar_chart = wandb.plot.bar(
+        table, "attribute", "error_rate", title="Attribute Level Error Rates"
+    )
+    logger({f"{split}/attribute_level_error_rate": bar_chart})

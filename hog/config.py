@@ -35,6 +35,7 @@ class NLU(Train):
 
 @dataclass
 class HogConfig:
+    run_name: str
     seed: int
     gpus: str  # use "1" to use only one gpu
     fast: bool  # whether to run fast dev run

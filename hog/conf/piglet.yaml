@@ -3,7 +3,7 @@ defaults:
   - base_config 
   - _self_
 
-run_name: "baseline"
+run_name: "piglet"
 gpus: "1"
 seed: 42
 fast: false
@@ -21,15 +21,15 @@ paths:
   output_dir: "${hydra:runtime.cwd}/output"
 
 model:
-  hidden_size: 64
-  num_layers: 1
+  hidden_size: 256
+  num_layers: 3
   num_heads: 4
   bert_model: "roberta-base"
   dropout: 0.1
   
 pretrain:
-  batch_size: 32
-  max_epochs: 5
+  batch_size: 256
+  max_epochs: 20
   learning_rate: 0.001
 
 nlu:

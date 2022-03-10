@@ -18,11 +18,10 @@ cs.store(name="base_config", node=HogConfig)
 @hydra.main(config_path="conf", config_name="config")
 def main(cfg: HogConfig) -> None:
     print(OmegaConf.to_yaml(cfg))
-
     seed_everything(cfg.seed)
 
     wandb_logger = WandbLogger(
-        name=f"{cfg.pretrain.job_type}_{cfg.seed}_img{cfg.images}_+SKIPIMAGES",
+        name=cfg.run_name,
         project="hog",
         entity="itl",
         job_type=cfg.pretrain.job_type,
@@ -70,7 +69,7 @@ def main(cfg: HogConfig) -> None:
 
     print("Loading NLU Task..")
 
-    run_name = "nlu_task"
+    run_name = f"{cfg.run_name}_nlu_task"
     pigpen = PigPenDataModule(
         data_dir_path=f"{cfg.paths.input_dir}/annotated",
         output_dir_path=f"{cfg.paths.output_dir}",

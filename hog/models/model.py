@@ -13,12 +13,15 @@ from .action_models import (
 )
 from .analysis import (
     calculate_average_accuracy,
-    calculate_average_attribute_accuracy,
     calculate_diff_accuracy,
+    log_action_accuracies,
+    log_attribute_level_error_rates,
+    log_average_attribute_accuracy,
+    log_confusion_matrices,
     plot_images,
 )
 from .image_models import PigletImageEncoder
-from .mappings import OBJECT_ATTRIBUTES, get_actions_mapper, get_objects_mapper
+from .mappings import get_actions_mapper, get_objects_mapper
 from .object_models import PigletObjectDecoder, PigletObjectEncoder
 
 
@@ -60,14 +63,11 @@ class Piglet(pl.LightningModule):
         self.num_heads = num_heads
         self.dropout = dropout
         self.object_embedding_size = object_embedding_size
-        self.num_attributes = num_attributes
         self.none_object_index = none_object_index  # mask object tensor with zeroes if object = none_object_index
         self.action_embedding_size = action_embedding_size
         self.pretrain = pretrain
         self.encode_images = encode_images
         self.plotted_images = False
-
-        assert len(OBJECT_ATTRIBUTES) == self.num_attributes
 
         # Image encoder
         if self.encode_images:
@@ -121,7 +121,7 @@ class Piglet(pl.LightningModule):
         )
 
         self.action_idx_to_name = get_actions_mapper(data_dir_path)
-        self.object_idx_to_name = get_objects_mapper(data_dir_path)
+        self.object_attributes_idx_to_mapper = get_objects_mapper(data_dir_path)
 
     def forward(
         self,
@@ -367,17 +367,13 @@ class Piglet(pl.LightningModule):
         )
         self.log(f"{split}/accuracy/average_accuracy", average_accuracy, prog_bar=True)
 
-        # calculate accuracy per attribute
-        average_attribute_accuracy = calculate_average_attribute_accuracy(
-            outputs["predictions"], outputs["objects_labels_post"], selection_mask
-        )
-        for acc, object_attribute_name in zip(
-            average_attribute_accuracy, OBJECT_ATTRIBUTES
-        ):
-            self.log(f"{split}/accuracy/attribute_level/{object_attribute_name}", acc)
-        self.log(
-            f"{split}/accuracy/average_attribute_accuracy",
-            average_attribute_accuracy.mean(),
+        # log accuracy per attribute
+        log_average_attribute_accuracy(
+            self.log,
+            outputs["predictions"],
+            outputs["objects_labels_post"],
+            selection_mask,
+            split=split,
         )
 
         # log accuracy of attributes that have changed
@@ -389,19 +385,40 @@ class Piglet(pl.LightningModule):
         self.log(f"{split}/accuracy/diff_accuracy", diff_accuracy)
 
         # log accuracy of actions
-        for action_index, action_name in self.action_idx_to_name.items():
-            action_mask = outputs["actions"][:, 0] == action_index
-            action_mask = repeat(action_mask, "b -> (b 2)") & selection_mask
-            action_accuracy = calculate_average_accuracy(
-                outputs["predictions"], outputs["objects_labels_post"], action_mask
-            )
-            self.log(
-                f"{split}/accuracy/action_level/{action_name}_accuracy", action_accuracy
-            )
+        log_action_accuracies(
+            self.log,
+            self.action_idx_to_name,
+            outputs["actions"],
+            outputs["predictions"],
+            outputs["objects_labels_post"],
+            selection_mask,
+            split=split,
+        )
+
+        # log error rate of attributes
+        log_attribute_level_error_rates(
+            self.logger.experiment.log,
+            outputs["predictions"],
+            outputs["objects_labels_post"],
+            selection_mask,
+            split=split,
+        )
+
+        # log confusion matrices for attributes
+        log_confusion_matrices(
+            self.logger.experiment.log,
+            self.object_attributes_idx_to_mapper,
+            outputs["predictions"],
+            outputs["objects_labels_post"],
+            selection_mask,
+            split=split,
+        )
 
         if "images" in outputs and not self.plotted_images:
             images_to_log, boxes_to_log, captions_to_log = plot_images(
-                outputs, self.action_idx_to_name, self.object_idx_to_name
+                outputs,
+                self.action_idx_to_name,
+                self.object_attributes_idx_to_mapper[0],
             )
             self.logger.log_image(
                 f"images",

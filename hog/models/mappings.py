@@ -57,4 +57,4 @@ def get_objects_mapper(data_dir_path: str) -> Dict[int, str]:
     """
     with open(f"{data_dir_path}/reverse_object_mapping.pkl", "rb") as f:
         # select first index since the first index is the objet name encoded as an int
-        return pickle.load(f)[0]
+        return pickle.load(f)
