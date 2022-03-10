@@ -3,6 +3,7 @@ from typing import Dict, Tuple
 
 import pytorch_lightning as pl
 import torch
+import torch.nn as nn
 from einops import repeat
 from torchtyping import TensorType
 
@@ -52,9 +53,13 @@ class Piglet(pl.LightningModule):
           dropout: dropout probability
           object_embedding_size: max embedding index of the object attributes
           num_attributes: number of attributes per object
-          action_embedding_size: max embedding index the action
           none_object_index: index of the none object
-          reverse_object_mapping_dir: path to the reverse object mapping
+          action_embedding_size: max embedding index the action
+          data_dir_path: path to the data directory
+          output_dir_path: path to the output directory
+          pretrain: whether in pretraining mode (no language model)
+          bert_model_name: name of the bert model to use (must have pretrain = False)
+          encode_images: whether to encode images
         """
         super().__init__()
         self.save_hyperparameters()
@@ -72,20 +77,24 @@ class Piglet(pl.LightningModule):
 
         # Image encoder
         if self.encode_images:
+            self.object_embedding_layer = nn.Embedding(
+                object_embedding_size, hidden_size, padding_idx=none_object_index
+            )
             self.image_encoder = PigletImageEncoder(
                 hidden_size=hidden_size, output_dir_path=output_dir_path
             )
 
-        # Object Encoder Model
-        self.object_encoder = PigletObjectEncoder(
-            hidden_size=hidden_size,
-            num_layers=num_layers,
-            num_heads=num_heads,
-            dropout=dropout,
-            object_embedding_size=object_embedding_size,
-            num_attributes=num_attributes,
-            none_object_index=none_object_index,
-        )
+        else:
+            # Object Encoder Model
+            self.object_encoder = PigletObjectEncoder(
+                hidden_size=hidden_size,
+                num_layers=num_layers,
+                num_heads=num_heads,
+                dropout=dropout,
+                object_embedding_size=object_embedding_size,
+                num_attributes=num_attributes,
+                none_object_index=none_object_index,
+            )
 
         # Action Encoder Model
         if self.pretrain:
@@ -137,9 +146,14 @@ class Piglet(pl.LightningModule):
 
         if self.pretrain:
             # sum the embedding of object targeted and its receptacle
-            action_args_embeddings = self.object_encoder.object_embedding_layer(
-                action_inputs[:, 1:]
-            ).sum(1)
+            if self.encode_images:
+                action_args_embeddings = self.object_embedding_layer(
+                        action_inputs[:, 1:]
+                ).sum(1)
+            else:
+                action_args_embeddings = self.object_encoder.object_embedding_layer(
+                    action_inputs[:, 1:]
+                ).sum(1)
             h_a = self.action_encoder(action_inputs[:, 0], action_args_embeddings)
         else:
             h_a = self.action_encoder(
@@ -148,9 +162,8 @@ class Piglet(pl.LightningModule):
 
         image_model_outputs = None
         if self.encode_images:
-            object_names = self.object_encoder.object_embedding_layer(
-                object_inputs[:, :, 0]
-            )
+            # even if we only use images we still need an object_embedding layer for the object names
+            object_names = self.object_embedding_layer(object_inputs[:, :, 0])
             conditional_vector = torch.cat(
                 (repeat(h_a, "b h -> b 4 h"), object_names), dim=2
             )

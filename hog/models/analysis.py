@@ -94,10 +94,12 @@ def calculate_average_accuracy(
     labels: TensorType["batch", "num_attributes"],
     selection_mask: TensorType["batch"],
 ) -> torch.Tensor:
-    num_objects, num_attributes = predictions.shape
+    num_attributes = predictions.shape[1]
     average_accuracy = (
-        (predictions == labels).sum(1)[selection_mask] == num_attributes
-    ).sum() / num_objects
+        ((predictions == labels).sum(1)[selection_mask] == num_attributes)
+        .float()
+        .mean()
+    )
     return average_accuracy
 
 
