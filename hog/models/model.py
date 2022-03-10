@@ -3,8 +3,8 @@ from typing import Dict, Tuple
 
 import pytorch_lightning as pl
 import torch
-import torch.nn.functional as F
-from einops import rearrange, repeat
+from einops import repeat
+from torchtyping import TensorType
 
 from .action_models import (
     PigletActionApplyModel,
@@ -21,6 +21,7 @@ from .analysis import (
     plot_images,
 )
 from .image_models import PigletImageEncoder
+from .loss import calculate_avg_object_loss
 from .mappings import get_actions_mapper, get_objects_mapper
 from .object_models import PigletObjectDecoder, PigletObjectEncoder
 
@@ -180,61 +181,18 @@ class Piglet(pl.LightningModule):
 
         return h_o_post_pred, h_o_pre_pred
 
-    def calculate_avg_object_loss(
-        self, objects: torch.Tensor, labels: torch.Tensor, eps=1e-12
-    ) -> torch.Tensor:
-        """
-        Args:
-            objects: float tensor of dims [batch_size, num_attributes, object_embedding_size]
-            labels: long tensor of dims [batch_size, num_attributes]
-        """
-        loss = F.cross_entropy(
-            objects.reshape(-1, self.object_embedding_size),
-            labels.flatten(),
-            reduction="none",
-        )
-        # first column of the object vector is the indexed (name) of the object
-        # if index == self.none_object_index then the object is not present
-        none_mask = torch.ones_like(labels)
-        none_mask *= (labels[:, 0] != self.none_object_index).unsqueeze(-1)
-        avg_loss = (loss * none_mask.flatten()).sum() / (none_mask.sum() + eps)
-        return avg_loss
-
     def calculate_object_attribute_loss_and_predictions(
-        self, h_o_post, objects_labels_post
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-
+        self,
+        h_out: TensorType["batch_objects", "num_attributes", "object_embedding_size"],
+        labels: TensorType["batch", 2, "num_attributes"],
+    ) -> Tuple[torch.Tensor, TensorType["batch_objects", "num_attributes"]]:
         # mask the embedding layer output to only allow predictions for valid attributes at each position
-        h_o_post = self.object_decoder.mask_output_probabilities(h_o_post)
-
-        # select the two objects of each example separately
-        h_o_post = rearrange(h_o_post, "(b n) a o -> b n a o", n=2)
-        objects_0 = h_o_post[:, 0, :, :]
-        objects_1 = h_o_post[:, 1, :, :]
-        objects_0_labels = objects_labels_post[:, 0, :]
-        objects_1_labels = objects_labels_post[:, 1, :]
-
+        h_out = self.object_decoder.mask_output_probabilities(h_out)
+        selection_mask = labels[:, :, 0] != self.none_object_index
         # calculate loss for each object (since it is a set we evaluate over both possibilities object 0 -> object label 0)
-        loss_0_1 = (
-            self.calculate_avg_object_loss(objects_0, objects_0_labels)
-            + self.calculate_avg_object_loss(objects_1, objects_1_labels)
-        ) / 2.0
-        loss_1_0 = (
-            self.calculate_avg_object_loss(objects_1, objects_0_labels)
-            + self.calculate_avg_object_loss(objects_0, objects_1_labels)
-        ) / 2.0
-
-        if loss_0_1 < loss_1_0:
-            avg_loss = loss_0_1
-            # get top 1 prediction for each object attribute
-            predictions = h_o_post.argmax(-1)
-        else:
-            avg_loss = loss_1_0
-            # predictions should be reversed for each object
-            predictions = torch.stack([objects_1, objects_0], dim=1).argmax(-1)
-
-        predictions = rearrange(predictions, "b n p -> (b n) p", n=2)
-
+        avg_loss = calculate_avg_object_loss(h_out, labels, selection_mask)
+        # get top 1 prediction for each object attribute
+        predictions = h_out.argmax(-1)
         return avg_loss, predictions
 
     def training_step(self, batch, batch_idx) -> torch.Tensor:

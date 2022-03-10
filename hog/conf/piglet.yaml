@@ -21,7 +21,7 @@ paths:
   output_dir: "${hydra:runtime.cwd}/output"
 
 model:
-  hidden_size: 256
+  hidden_size: 128
   num_layers: 3
   num_heads: 4
   bert_model: "roberta-base"

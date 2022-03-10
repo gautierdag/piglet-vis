@@ -27,6 +27,7 @@ def main(cfg: HogConfig) -> None:
         job_type=cfg.pretrain.job_type,
         config=cfg,
         save_dir=f"{cfg.paths.output_dir}",
+        mode="disabled" if cfg.fast else "online",
     )
 
     run_name = wandb_logger.experiment.name
@@ -96,6 +97,7 @@ def main(cfg: HogConfig) -> None:
         job_type=cfg.nlu.job_type,
         config=cfg,
         save_dir=f"{cfg.paths.output_dir}",
+        mode="disabled" if cfg.fast else "enabled",
     )
 
     trainer = pl.Trainer(

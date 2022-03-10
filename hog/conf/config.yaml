@@ -6,7 +6,7 @@ defaults:
 run_name: "baseline"
 gpus: "1"
 seed: 42
-fast: false
+fast: true
 images: false
 
 hydra:
