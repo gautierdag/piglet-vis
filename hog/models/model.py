@@ -4,7 +4,7 @@ from typing import Dict, Tuple
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
-from einops import rearrange, repeat
+from einops import repeat
 from torchtyping import TensorType
 
 from .action_models import (
@@ -367,12 +367,15 @@ class Piglet(pl.LightningModule):
                 self.action_idx_to_name,
                 self.object_attributes_idx_to_mapper[0],
             )
-            self.logger.log_image(
-                f"Images",
-                images_to_log,
-                boxes=boxes_to_log,
-                caption=captions_to_log,
-            )
+            try:
+                self.logger.log_image(
+                    "Images",
+                    images_to_log,
+                    boxes=boxes_to_log,
+                    caption=captions_to_log,
+                )
+            except NotImplementedError: # when testing log_image is not_implemented in DummyLogger
+                pass
 
     def validation_step(self, batch, batch_idx) -> Dict[str, torch.Tensor]:
         return self.process_inference_batch(batch, batch_idx, split="val")
