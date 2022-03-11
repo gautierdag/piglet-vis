@@ -5,7 +5,7 @@ numpy
 wandb
 black
 timm
-hydra
+hydra-core
 torchtyping
 transformers
 einops
