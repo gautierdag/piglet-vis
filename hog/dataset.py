@@ -97,10 +97,10 @@ class PigPenDataset(Dataset):
 
         if self.images:
             image_0 = load_image_from_path(
-                f"{self.image_directory}/{self.image_indices[index]}/0.jpeg"
+                f"{self.image_directory}/{self.image_indices[index]}_0.jpeg"
             )
             image_1 = load_image_from_path(
-                f"{self.image_directory}/{self.image_indices[index]}/1.jpeg"
+                f"{self.image_directory}/{self.image_indices[index]}_1.jpeg"
             )
             # stack images
             images = torch.stack([image_0, image_1])
