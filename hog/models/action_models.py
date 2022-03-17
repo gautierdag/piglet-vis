@@ -26,7 +26,7 @@ class PigletSymbolicActionEncoder(nn.Module):
         for l in range(num_layers):
             action_encoder_layers[f"dropout_{l}"] = nn.Dropout(dropout)
             action_encoder_layers[f"linear_{l}"] = nn.Linear(hidden_size, hidden_size)
-            action_encoder_layers[f"activation_{l}"] = nn.Tanh()
+            action_encoder_layers[f"activation_{l}"] = nn.ReLU()
         self.action_encoder = nn.Sequential(action_encoder_layers)
 
     def forward(
@@ -56,7 +56,7 @@ class PigletAnnotatedActionEncoder(nn.Module):
             add_pooling_layer=False,
         )
         self.output_layer = nn.Linear(self.bert_model.config.hidden_size, hidden_size)
-        self.activation = nn.Tanh()
+        self.activation = nn.ReLU()
 
     def forward(
         self,
@@ -90,7 +90,7 @@ class PigletActionApplyModel(nn.Module):
         for l in range(num_layers):
             action_apply_layers[f"dropout_{l}"] = nn.Dropout(dropout)
             action_apply_layers[f"linear_{l}"] = nn.Linear(hidden_size, hidden_size)
-            action_apply_layers[f"activation_{l}"] = nn.Tanh()
+            action_apply_layers[f"activation_{l}"] = nn.ReLU()
         self.action_apply_layers = nn.Sequential(action_apply_layers)
 
     def forward(

@@ -3,11 +3,11 @@ defaults:
   - base_config 
   - _self_
 
-run_name: "baseline"
-gpus: "1"
+run_name: "images_ddp"
+gpus: 2
 seed: 42
-fast: true
-images: false
+fast: false
+images: true
 num_workers: 6
 
 hydra:
@@ -30,13 +30,14 @@ model:
   
 pretrain:
   batch_size: 32
-  max_epochs: 5
+  max_epochs: 20
   learning_rate: 0.001
 
 nlu:
-  batch_size: 64
+  batch_size: 32
   max_epochs: 80
   learning_rate: 0.00001
+
 
 
 

@@ -37,7 +37,7 @@ class PigletObjectEncoder(nn.Module):
         self.object_encoder_transformer = nn.TransformerEncoder(
             encoder_layer, num_layers=num_layers
         )
-        self.activation = nn.Tanh()
+        self.activation = nn.ReLU()
 
     def forward(
         self, object_inputs: TensorType["batch_size", "num_objects", "num_attributes"]
@@ -112,7 +112,7 @@ class PigletObjectDecoder(nn.Module):
         mask_embedding_layer[indexes[:, 0], indexes[:, 1]] = 1
         self.register_buffer("mask_embedding_layer", mask_embedding_layer)
 
-        self.activation = nn.Tanh()
+        self.activation = nn.ReLU()
 
         self.object_h_to_attributes = nn.Sequential(
             nn.Linear(hidden_size, self.num_attributes * hidden_size),

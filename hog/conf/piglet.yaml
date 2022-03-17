@@ -3,11 +3,12 @@ defaults:
   - base_config 
   - _self_
 
-run_name: "piglet"
+run_name: "piglet_relu"
 gpus: "1"
 seed: 42
 fast: false
 images: false
+num_workers: 6
 
 hydra:
   output_subdir: null

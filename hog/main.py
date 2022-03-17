@@ -1,3 +1,5 @@
+import os
+
 import hydra
 import pytorch_lightning as pl
 import wandb
@@ -5,6 +7,7 @@ from hydra.core.config_store import ConfigStore
 from omegaconf import OmegaConf
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning.plugins import DDPPlugin
 from pytorch_lightning.utilities.seed import seed_everything
 
 from config import HogConfig
@@ -19,6 +22,9 @@ cs.store(name="base_config", node=HogConfig)
 def main(cfg: HogConfig) -> None:
     print(OmegaConf.to_yaml(cfg))
     seed_everything(cfg.seed)
+
+    if os.environ.get("LOCAL_RANK", 0) == 0:
+        wandb.init()
 
     wandb_logger = WandbLogger(
         name=cfg.run_name,
@@ -37,6 +43,7 @@ def main(cfg: HogConfig) -> None:
         data_dir_path=cfg.paths.input_dir,
         batch_size=cfg.pretrain.batch_size,
         images=cfg.images,
+        num_workers=cfg.num_workers,
     )
 
     print("Creating Model")
@@ -60,8 +67,9 @@ def main(cfg: HogConfig) -> None:
         logger=wandb_logger,
         gpus=cfg.gpus,
         callbacks=[checkpoint_callback],
-        val_check_interval=0.1,  # check val 10x per epoch
+        val_check_interval=0.2,  # check val 5x per epoch
         fast_dev_run=cfg.fast,
+        strategy=DDPPlugin(find_unused_parameters=False),
     )
 
     print("Training...")
@@ -76,6 +84,7 @@ def main(cfg: HogConfig) -> None:
         output_dir_path=f"{cfg.paths.output_dir}",
         batch_size=cfg.nlu.batch_size,
         annotations=True,
+        num_workers=cfg.num_workers,
     )
 
     model = Piglet.load_from_checkpoint(
@@ -107,6 +116,7 @@ def main(cfg: HogConfig) -> None:
         callbacks=[checkpoint_callback],
         fast_dev_run=cfg.fast,
         log_every_n_steps=1,
+        strategy=DDPPlugin(find_unused_parameters=False),
     )
 
     print("Training...")

@@ -374,7 +374,7 @@ class Piglet(pl.LightningModule):
                     boxes=boxes_to_log,
                     caption=captions_to_log,
                 )
-            except NotImplementedError: # when testing log_image is not_implemented in DummyLogger
+            except NotImplementedError:  # when testing log_image is not_implemented in DummyLogger
                 pass
 
     def validation_step(self, batch, batch_idx) -> Dict[str, torch.Tensor]:
