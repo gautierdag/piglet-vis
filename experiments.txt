@@ -1,0 +1,2 @@
+ python hog/main.py --config-name images_base ++pretrain.batch_size=56
+ python hog/main.py --config-name images_fuse ++pretrain.batch_size=56
