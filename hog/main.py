@@ -1,4 +1,6 @@
+import glob
 import os
+from typing import Tuple
 
 import hydra
 import pytorch_lightning as pl
@@ -18,24 +20,38 @@ cs = ConfigStore.instance()
 cs.store(name="base_config", node=HogConfig)
 
 
+def get_unique_run_name(checkpoint_path: str, seed: int) -> Tuple[str, bool]:
+    # if directory exists and there is only one checkpoint
+    if os.path.exists(checkpoint_path):
+        checkpoints = glob.glob(f"{checkpoint_path}/*.ckpt")
+        if len(checkpoints) == 1:
+            return checkpoints[0].split(".ckpt")[0], True
+    # else return get_unique_run_name, False (not resuming)
+    unique_run_name = f"{seed}_{wandb.util.generate_id()}"
+    return unique_run_name, False
+
+
 @hydra.main(config_path="conf", config_name="config")
 def main(cfg: HogConfig) -> None:
     print(OmegaConf.to_yaml(cfg))
     seed_everything(cfg.seed)
 
+    # Determine name of run and unique id (if not resuming)
+    run_name = f"{cfg.run_name}_{cfg.seed}"
+    checkpoint_path = f"{cfg.paths.output_dir}/checkpoints/{run_name}"
+    unique_run_name, resume_training = get_unique_run_name(checkpoint_path, cfg.seed)
+
     wandb_logger = WandbLogger(
-        name=f"{cfg.run_name}_{cfg.seed}",
+        name=run_name,
         project="hog",
         entity="itl",
         job_type=cfg.pretrain.job_type,
         config=cfg,
         save_dir=f"{cfg.paths.output_dir}",
         mode="disabled" if cfg.fast else "online",
-        id=f"{cfg.run_name}_{cfg.seed}",
+        id=unique_run_name,
         group=cfg.run_name,
     )
-
-    run_name = wandb_logger.experiment.name
 
     print("Loading dataset")
     pigpen = PigPenDataModule(
@@ -58,7 +74,7 @@ def main(cfg: HogConfig) -> None:
     )
 
     print("Creating Trainer")
-    checkpoint_path = f"{cfg.paths.output_dir}/checkpoints/{run_name}"
+
     best_model_name = f"{cfg.seed}_best"
     checkpoint_callback = ModelCheckpoint(
         monitor="val_loss",
@@ -78,12 +94,12 @@ def main(cfg: HogConfig) -> None:
     )
 
     print("Training...")
-    if os.path.exists(f"{checkpoint_path}/{best_model_name}.ckpt"):
+    if resume_training:
         print("Found checkpoint: resuming training for model")
         trainer.fit(
             model,
             datamodule=pigpen,
-            ckpt_path=f"{checkpoint_path}/{best_model_name}.ckpt",
+            ckpt_path=f"{checkpoint_path}/{unique_run_name}.ckpt",
         )
     else:
         trainer.fit(model, datamodule=pigpen)
@@ -91,7 +107,11 @@ def main(cfg: HogConfig) -> None:
     wandb.finish()
 
     print("Loading NLU Task..")
-    run_name = f"{cfg.run_name}_nlu_task"
+    # Determine name of run and unique id (if not resuming)
+    run_name = f"{cfg.run_name}_{cfg.seed}_nlu_task"
+    checkpoint_path = f"{cfg.paths.output_dir}/checkpoints/{run_name}"
+    unique_run_name, resume_training = get_unique_run_name(checkpoint_path, cfg.seed)
+
     pigpen = PigPenDataModule(
         data_dir_path=f"{cfg.paths.input_dir}/annotated",
         output_dir_path=f"{cfg.paths.output_dir}",
@@ -109,23 +129,22 @@ def main(cfg: HogConfig) -> None:
     )
 
     checkpoint_path = f"{cfg.paths.output_dir}/checkpoints/{run_name}"
-    best_model_name = f"{cfg.seed}_best"
     checkpoint_callback = ModelCheckpoint(
         monitor="val_loss",
         dirpath=checkpoint_path,
         every_n_epochs=1,
-        filename=best_model_name,
+        filename=unique_run_name,
     )
 
     wandb_logger = WandbLogger(
-        name=f"{cfg.run_name}_{cfg.seed}",
+        name=run_name,
         project="hog",
         entity="itl",
         job_type=cfg.nlu.job_type,
         config=cfg,
         save_dir=f"{cfg.paths.output_dir}",
         mode="disabled" if cfg.fast else "enabled",
-        id=f"{cfg.run_name}_{cfg.seed}",
+        id=unique_run_name,
         group=cfg.run_name,
     )
 
@@ -141,12 +160,12 @@ def main(cfg: HogConfig) -> None:
     )
 
     print("Training...")
-    if os.path.exists(f"{checkpoint_path}/{best_model_name}.ckpt"):
+    if resume_training:
         print("Found checkpoint: resuming training for model")
         trainer.fit(
             model,
             datamodule=pigpen,
-            ckpt_path=f"{checkpoint_path}/{best_model_name}.ckpt",
+            ckpt_path=f"{checkpoint_path}/{unique_run_name}.ckpt",
         )
     else:
         trainer.fit(model, datamodule=pigpen)
