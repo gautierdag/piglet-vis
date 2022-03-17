@@ -3,7 +3,7 @@ defaults:
   - base_config 
   - _self_
 
-run_name: "piglet_relu"
+run_name: "piglet_resume_test"
 gpus: "1"
 seed: 42
 fast: false

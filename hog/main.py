@@ -23,9 +23,6 @@ def main(cfg: HogConfig) -> None:
     print(OmegaConf.to_yaml(cfg))
     seed_everything(cfg.seed)
 
-    if os.environ.get("LOCAL_RANK", 0) == 0:
-        wandb.init()
-
     wandb_logger = WandbLogger(
         name=cfg.run_name,
         project="hog",
@@ -34,6 +31,7 @@ def main(cfg: HogConfig) -> None:
         config=cfg,
         save_dir=f"{cfg.paths.output_dir}",
         mode="disabled" if cfg.fast else "online",
+        id=f"{cfg.run_name}_{cfg.seed}",
     )
 
     run_name = wandb_logger.experiment.name
@@ -58,8 +56,13 @@ def main(cfg: HogConfig) -> None:
     )
 
     print("Creating Trainer")
+    checkpoint_path = f"{cfg.paths.output_dir}/checkpoints/{run_name}"
+    best_model_name = f"{cfg.seed}_best"
     checkpoint_callback = ModelCheckpoint(
-        monitor="val_loss", dirpath=f"{cfg.paths.output_dir}/checkpoints/{run_name}"
+        monitor="val_loss",
+        dirpath=checkpoint_path,
+        every_n_epochs=1,
+        filename=best_model_name,
     )
 
     trainer = pl.Trainer(
@@ -67,17 +70,26 @@ def main(cfg: HogConfig) -> None:
         logger=wandb_logger,
         gpus=cfg.gpus,
         callbacks=[checkpoint_callback],
-        val_check_interval=0.2,  # check val 5x per epoch
+        # val_check_interval=0.2,  # check val 5x per epoch
         fast_dev_run=cfg.fast,
         strategy=DDPPlugin(find_unused_parameters=False),
+        limit_train_batches=0.1,
     )
 
     print("Training...")
-    trainer.fit(model, datamodule=pigpen)
+    if os.path.exists(f"{checkpoint_path}/{best_model_name}.ckpt"):
+        print("Found checkpoint: resuming training for model")
+        trainer.fit(
+            model,
+            datamodule=pigpen,
+            ckpt_path=f"{checkpoint_path}/{best_model_name}.ckpt",
+        )
+    else:
+        trainer.fit(model, datamodule=pigpen)
+
     wandb.finish()
 
     print("Loading NLU Task..")
-
     run_name = f"{cfg.run_name}_nlu_task"
     pigpen = PigPenDataModule(
         data_dir_path=f"{cfg.paths.input_dir}/annotated",
@@ -95,8 +107,13 @@ def main(cfg: HogConfig) -> None:
         output_dir_path=f"{cfg.paths.output_dir}",
     )
 
+    checkpoint_path = f"{cfg.paths.output_dir}/checkpoints/{run_name}"
+    best_model_name = f"{cfg.seed}_best"
     checkpoint_callback = ModelCheckpoint(
-        monitor="val_loss", dirpath=f"{cfg.paths.output_dir}/checkpoints/{run_name}"
+        monitor="val_loss",
+        dirpath=checkpoint_path,
+        every_n_epochs=1,
+        filename=best_model_name,
     )
 
     wandb_logger = WandbLogger(
@@ -107,6 +124,7 @@ def main(cfg: HogConfig) -> None:
         config=cfg,
         save_dir=f"{cfg.paths.output_dir}",
         mode="disabled" if cfg.fast else "enabled",
+        id=f"{cfg.run_name}_{cfg.seed}",
     )
 
     trainer = pl.Trainer(
@@ -120,7 +138,15 @@ def main(cfg: HogConfig) -> None:
     )
 
     print("Training...")
-    trainer.fit(model, datamodule=pigpen)
+    if os.path.exists(f"{checkpoint_path}/{best_model_name}.ckpt"):
+        print("Found checkpoint: resuming training for model")
+        trainer.fit(
+            model,
+            datamodule=pigpen,
+            ckpt_path=f"{checkpoint_path}/{best_model_name}.ckpt",
+        )
+    else:
+        trainer.fit(model, datamodule=pigpen)
 
     print("Testing...")
     trainer.test(model, datamodule=pigpen)
