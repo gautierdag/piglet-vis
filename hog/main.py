@@ -24,7 +24,7 @@ def main(cfg: HogConfig) -> None:
     seed_everything(cfg.seed)
 
     wandb_logger = WandbLogger(
-        name=cfg.run_name,
+        name=f"{cfg.run_name}_{cfg.seed}",
         project="hog",
         entity="itl",
         job_type=cfg.pretrain.job_type,
@@ -32,6 +32,7 @@ def main(cfg: HogConfig) -> None:
         save_dir=f"{cfg.paths.output_dir}",
         mode="disabled" if cfg.fast else "online",
         id=f"{cfg.run_name}_{cfg.seed}",
+        group=cfg.run_name,
     )
 
     run_name = wandb_logger.experiment.name
@@ -53,6 +54,7 @@ def main(cfg: HogConfig) -> None:
         num_heads=cfg.model.num_heads,
         dropout=cfg.model.dropout,
         encode_images=cfg.images,
+        fuse_images=cfg.model.fuse_images,
     )
 
     print("Creating Trainer")
@@ -70,10 +72,9 @@ def main(cfg: HogConfig) -> None:
         logger=wandb_logger,
         gpus=cfg.gpus,
         callbacks=[checkpoint_callback],
-        # val_check_interval=0.2,  # check val 5x per epoch
+        val_check_interval=0.2,  # check val 5x per epoch
         fast_dev_run=cfg.fast,
         strategy=DDPPlugin(find_unused_parameters=False),
-        limit_train_batches=0.1,
     )
 
     print("Training...")
@@ -117,7 +118,7 @@ def main(cfg: HogConfig) -> None:
     )
 
     wandb_logger = WandbLogger(
-        name=f"{cfg.nlu.job_type}",
+        name=f"{cfg.run_name}_{cfg.seed}",
         project="hog",
         entity="itl",
         job_type=cfg.nlu.job_type,
@@ -125,6 +126,7 @@ def main(cfg: HogConfig) -> None:
         save_dir=f"{cfg.paths.output_dir}",
         mode="disabled" if cfg.fast else "enabled",
         id=f"{cfg.run_name}_{cfg.seed}",
+        group=cfg.run_name,
     )
 
     trainer = pl.Trainer(
@@ -135,6 +137,7 @@ def main(cfg: HogConfig) -> None:
         fast_dev_run=cfg.fast,
         log_every_n_steps=1,
         strategy=DDPPlugin(find_unused_parameters=False),
+        fuse_images=cfg.model.fuse_images,
     )
 
     print("Training...")

@@ -3,7 +3,7 @@ defaults:
   - base_config 
   - _self_
 
-run_name: "piglet_resume_test"
+run_name: "piglet"
 gpus: "1"
 seed: 42
 fast: false
@@ -27,7 +27,8 @@ model:
   num_heads: 4
   bert_model: "roberta-base"
   dropout: 0.1
-  
+  fuse_images: false
+
 pretrain:
   batch_size: 256
   max_epochs: 20

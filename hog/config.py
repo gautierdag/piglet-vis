@@ -14,6 +14,7 @@ class Model:
     num_heads: int
     bert_model: str
     dropout: float
+    fuse_images: bool
 
 
 @dataclass
@@ -40,7 +41,7 @@ class HogConfig:
     gpus: str  # use "1" to use only one gpu
     fast: bool  # whether to run fast dev run
     images: bool  # whether to use images
-    num_workers: int # number of workers for dataloader
+    num_workers: int  # number of workers for dataloader
     paths: Paths  # input and output directories
     model: Model  # model parameters constant for both pretrain and nlu
     pretrain: Pretrain  # Settings specific to pretraining

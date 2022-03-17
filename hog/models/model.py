@@ -44,6 +44,7 @@ class Piglet(pl.LightningModule):
         pretrain=True,
         bert_model_name="roberta-base",
         encode_images=False,
+        fuse_images=False,
     ):
         """
         Args:
@@ -73,7 +74,10 @@ class Piglet(pl.LightningModule):
         self.action_embedding_size = action_embedding_size
         self.pretrain = pretrain
         self.encode_images = encode_images
-        self.plotted_images = False
+        self.fuse_images = fuse_images
+
+        if fuse_images:
+            assert encode_images, "encode_images must be True with fuse_images"
 
         # Image encoder
         if self.encode_images:
@@ -181,7 +185,10 @@ class Piglet(pl.LightningModule):
         # apply action to object hidden representations
         h_o_a = self.apply_action(h_o_pre, h_a)
 
-        # use transformer decoder and pass pre_object as src vector and h_o_a as the memory vector
+        # fuse image representation of post image with pre image representation
+        if self.fuse_images:
+            h_o_pre += h_o[:, [2, 3], :]
+
         h_o_post_pred = self.object_decoder(h_o_a, h_o_pre)
 
         h_o_a_init = torch.zeros_like(h_o_a)
@@ -278,7 +285,9 @@ class Piglet(pl.LightningModule):
             results["image_bbox_scores"] = image_outputs["bbox_scores"].cpu()
         return results
 
-    def calculate_epoch_end_statistics(self, step_outputs, split="val") -> None:
+    def calculate_epoch_end_statistics(
+        self, step_outputs, split="val", log_images=False
+    ) -> None:
 
         """
         Calculate epoch statistics (accuracy) over entire validation set
@@ -361,7 +370,7 @@ class Piglet(pl.LightningModule):
             split=split,
         )
 
-        if "images" in outputs and not self.plotted_images:
+        if "images" in outputs and log_images:
             images_to_log, boxes_to_log, captions_to_log = plot_images(
                 outputs,
                 self.action_idx_to_name,
@@ -387,8 +396,9 @@ class Piglet(pl.LightningModule):
         return self.process_inference_batch(batch, batch_idx, split="test")
 
     def test_epoch_end(self, test_step_outputs) -> None:
-        self.plotted_images = False
-        self.calculate_epoch_end_statistics(test_step_outputs, split="test")
+        self.calculate_epoch_end_statistics(
+            test_step_outputs, split="test", log_images=True
+        )
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
         return torch.optim.Adam(self.parameters(), lr=self.learning_rate)

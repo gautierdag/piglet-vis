@@ -27,6 +27,7 @@ model:
   num_heads: 4
   bert_model: "roberta-base"
   dropout: 0.1
+  fuse_images: false
   
 pretrain:
   batch_size: 32
