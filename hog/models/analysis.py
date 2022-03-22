@@ -185,9 +185,12 @@ def log_confusion_matrices(
             y_true=labels[:, idx].numpy() - min_idx,
             class_names=class_names,
         )
-        logger(
-            {f"Confusion Matrices/{split}_{object_attribute_name}": confusion_matrix}
-        )
+        try:
+            logger(
+                {f"Confusion Matrices/{split}_{object_attribute_name}": confusion_matrix}
+            )
+        except FileNotFoundError as e:
+            print(f"{e}: Error saving wandb confusion matrix to /tmp/")
 
 
 def log_attribute_level_error_rates(
@@ -205,4 +208,7 @@ def log_attribute_level_error_rates(
     bar_chart = wandb.plot.bar(
         table, "attribute", "error_rate", title="Attribute Level Error Rates"
     )
-    logger({f"Attribute Errors/{split}_attribute_level_error_rate": bar_chart})
+    try:
+        logger({f"Attribute Errors/{split}_attribute_level_error_rate": bar_chart})
+    except FileNotFoundError as e:
+        print(f"{e}: Error saving wandb table to /tmp/")

@@ -68,7 +68,7 @@ set -e
 # N.B. disk could be at /disk/scratch_big, or /disk/scratch_fast. Check
 # yourself using an interactive session, or check the docs:
 #     http://computing.help.inf.ed.ac.uk/cluster-computing
-if [${SLURM_JOB_NODELIST} == "duflo"];
+if [[ ${SLURM_JOB_NODELIST} == "duflo" ]];
 then 
     SCRATCH_DISK=/disk/scratch_ssd
     SCRATCH_HOME=${SCRATCH_DISK}/${USER}
