@@ -138,12 +138,7 @@ class Piglet(pl.LightningModule):
         self.object_attributes_idx_to_mapper = get_objects_mapper(data_dir_path)
 
     def forward(
-        self,
-        objects,
-        actions,
-        action_text=None,
-        images=None,
-        training=True,
+        self, objects, actions, action_text=None, images=None, training=True, **kwargs
     ):
         # check that image inputs are not passed if no image encoder and vice versa
         assert (images is None) == (not self.encode_images)
@@ -351,6 +346,10 @@ class Piglet(pl.LightningModule):
             split=split,
         )
 
+        # skip advanced logging when fast dev run since wandb is not enabled
+        if self.trainer.fast_dev_run:
+            return
+
         # log error rate of attributes
         log_attribute_level_error_rates(
             self.logger.experiment.log,
@@ -376,15 +375,12 @@ class Piglet(pl.LightningModule):
                 self.action_idx_to_name,
                 self.object_attributes_idx_to_mapper[0],
             )
-            try:
-                self.logger.log_image(
-                    "Images",
-                    images_to_log,
-                    boxes=boxes_to_log,
-                    caption=captions_to_log,
-                )
-            except NotImplementedError:  # when testing log_image is not_implemented in DummyLogger
-                pass
+            self.logger.log_image(
+                "Images",
+                images_to_log,
+                boxes=boxes_to_log,
+                caption=captions_to_log,
+            )
 
     def validation_step(self, batch, batch_idx) -> Dict[str, torch.Tensor]:
         return self.process_inference_batch(batch, batch_idx, split="val")

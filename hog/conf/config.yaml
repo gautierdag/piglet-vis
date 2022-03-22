@@ -7,7 +7,7 @@ run_name: "baseline"
 gpus: "1"
 seed: 42
 fast: true
-images: false
+images: true
 num_workers: 6
 
 hydra:
@@ -30,12 +30,12 @@ model:
   fuse_images: false
   
 pretrain:
-  batch_size: 32
+  batch_size: 16
   max_epochs: 5
   learning_rate: 0.001
 
 nlu:
-  batch_size: 64
+  batch_size: 8
   max_epochs: 80
   learning_rate: 0.00001
 

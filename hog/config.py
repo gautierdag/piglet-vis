@@ -25,16 +25,6 @@ class Train:
 
 
 @dataclass
-class Pretrain(Train):
-    job_type: str = "pretrain"
-
-
-@dataclass
-class NLU(Train):
-    job_type: str = "nlu_task"
-
-
-@dataclass
 class HogConfig:
     run_name: str
     seed: int
@@ -44,5 +34,5 @@ class HogConfig:
     num_workers: int  # number of workers for dataloader
     paths: Paths  # input and output directories
     model: Model  # model parameters constant for both pretrain and nlu
-    pretrain: Pretrain  # Settings specific to pretraining
-    nlu: NLU  # Settings specific to NLU finetuning task
+    pretrain: Train  # Settings specific to pretraining
+    nlu: Train  # Settings specific to NLU finetuning task
