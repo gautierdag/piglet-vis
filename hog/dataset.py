@@ -158,6 +158,7 @@ class PigPenDataset(Dataset):
             f"{self.image_directory}/{self.image_indices[index]}_1.jpeg"
         )
         images = torch.stack([image_0, image_1])
+
         with h5py.File(self.h5py_file_path, "r", libver="latest", swmr=True) as h5:
             bboxes_pre = self.h5[f"{self.h5py_dataset_path}/bboxes/pre"][index]
             bboxes_post = self.h5[f"{self.h5py_dataset_path}/bboxes/post"][index]

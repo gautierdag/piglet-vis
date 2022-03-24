@@ -100,7 +100,6 @@ def train(cfg: HogConfig, job_type="pretrain", best_model_path=None) -> str:
         )
 
     print("Creating Trainer")
-    # best_model_name = f"{cfg.seed}_best"
     checkpoint_callback = ModelCheckpoint(
         monitor="val_loss",
         dirpath=checkpoint_path,
@@ -113,7 +112,6 @@ def train(cfg: HogConfig, job_type="pretrain", best_model_path=None) -> str:
         logger=wandb_logger,
         gpus=cfg.gpus,
         callbacks=[checkpoint_callback],
-        val_check_interval=0.2,  # check val 5x per epoch
         fast_dev_run=cfg.fast,
         strategy=DDPPlugin(find_unused_parameters=False),
     )
@@ -134,7 +132,7 @@ def train(cfg: HogConfig, job_type="pretrain", best_model_path=None) -> str:
         trainer.test(model, datamodule=pigpen)
 
     if not cfg.fast:
-        wandb.save(checkpoint_callback.best_model_path)
+        wandb.save(checkpoint_callback.best_model_path, base_path="/checkpoints")
     wandb.finish()
 
     return checkpoint_callback.best_model_path

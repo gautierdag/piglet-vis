@@ -394,7 +394,7 @@ class Piglet(pl.LightningModule):
             self.logger.log_image(
                 "Images",
                 images_to_log,
-                boxes=boxes_to_log,
+                # boxes=boxes_to_log,
                 caption=captions_to_log,
             )
 

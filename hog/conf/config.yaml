@@ -6,7 +6,7 @@ defaults:
 run_name: "test"
 gpus: "1"
 seed: 42
-fast: true
+fast: false
 images: true
 num_workers: 6
 

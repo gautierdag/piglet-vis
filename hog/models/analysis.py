@@ -1,39 +1,105 @@
 from typing import Dict, Tuple
 
+import matplotlib.colors as mcolors
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import wandb
 from einops import rearrange, repeat
+from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
+from PIL import Image
 from torchtyping import TensorType
 
 from .mappings import OBJECT_ATTRIBUTES
 
+# import matplotlib
+# matplotlib.use("Agg")
 
-def generate_wandb_bounding_boxes(
-    bboxes: TensorType["N", "box"], scores: TensorType["obj", "N"]
-) -> dict:
-    """
-    Format the bboxes and scores for wandb logger
-    """
-    image_before_boxes = {"predictions": {"box_data": []}}
-    for i, (x_min, y_min, x_max, y_max) in enumerate(bboxes):
-        obj1_score = scores[0][i]
-        obj2_score = scores[1][i]
-        box = {
-            "position": {
-                "minX": x_min.item(),
-                "maxX": x_max.item(),
-                "minY": y_min.item(),
-                "maxY": y_max.item(),
-            },
-            "domain": "pixel",
-            "class_id": i,
-            "scores": {
-                "obj_1_score": obj1_score.item(),
-                "obj_2_score": obj2_score.item(),
-            },
-        }
-        image_before_boxes["predictions"]["box_data"].append(box)
-    return image_before_boxes
+
+def get_cmap(cm="jet", N=256):
+    colors = getattr(plt.cm, cm)(np.linspace(0, 1, N))
+    transparent_hot_colors = []
+    for c, t in zip(colors, np.linspace(0, 1, N)):
+        transparent_hot_colors.append(c)
+        transparent_hot_colors[-1][-1] = t
+    return mcolors.LinearSegmentedColormap.from_list("hot", transparent_hot_colors, N=N)
+
+
+def calculate_attention_weights_per_pixel(bboxes, scores):
+    attention_weights = torch.zeros(384, 640, 1)
+    for box, score in zip(bboxes, scores):
+        x_min, y_min, x_max, y_max = box
+        attention_weights[y_min:y_max, x_min:x_max] += score
+    return attention_weights
+
+
+def imshow_with_attention_overlay(ax, image, bboxes, scores):
+    attention_weights = calculate_attention_weights_per_pixel(bboxes, scores)
+    ax.imshow(image)
+    ax.imshow(attention_weights, cmap=get_cmap())
+
+
+def turn_off_axis(ax):
+    ax.get_xaxis().set_ticks([])
+    ax.get_yaxis().set_ticks([])
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["bottom"].set_visible(False)
+    ax.spines["left"].set_visible(False)
+
+
+def plot_effect_grid(images, bboxes, scores, objects):
+    dpi = 100
+    sizes = np.shape(images[0])
+    fig, axs = plt.subplots(
+        2, 2, figsize=((sizes[1] / dpi) * 2, (sizes[0] / dpi) * 2), dpi=dpi
+    )
+    canvas = FigureCanvas(fig)
+    caption_dict = {0: "Before", 1: "After"}
+    for i in range(2):
+        for o in range(2):
+            if i == 0:
+                axs[i][o].set_title(f"{objects[o]}")
+            if o == 0:
+                axs[i][o].set_ylabel(caption_dict[i])
+            turn_off_axis(axs[i][o])
+            imshow_with_attention_overlay(axs[i][o], images[i], bboxes[i], scores[i][o])
+
+    plt.subplots_adjust(wspace=0, hspace=0)
+
+    canvas.draw()
+    image_from_plot = np.frombuffer(canvas.tostring_rgb(), dtype=np.uint8)
+    image_from_plot = image_from_plot.reshape(canvas.get_width_height()[::-1] + (3,))
+
+    return Image.fromarray(image_from_plot)
+
+
+# def generate_wandb_bounding_boxes(
+#     bboxes: TensorType["N", "box"], scores: TensorType["obj", "N"]
+# ) -> dict:
+#     """
+#     Format the bboxes and scores for wandb logger
+#     """
+#     image_before_boxes = {"predictions": {"box_data": []}}
+#     for i, (x_min, y_min, x_max, y_max) in enumerate(bboxes):
+#         obj1_score = scores[0][i]
+#         obj2_score = scores[1][i]
+#         box = {
+#             "position": {
+#                 "minX": x_min.item(),
+#                 "maxX": x_max.item(),
+#                 "minY": y_min.item(),
+#                 "maxY": y_max.item(),
+#             },
+#             "domain": "pixel",
+#             "class_id": i,
+#             "scores": {
+#                 "obj_1_score": obj1_score.item(),
+#                 "obj_2_score": obj2_score.item(),
+#             },
+#         }
+#         image_before_boxes["predictions"]["box_data"].append(box)
+#     return image_before_boxes
 
 
 def get_example_title_from_actions_object(
@@ -72,12 +138,7 @@ def plot_images(
     for i in range(len(indices)):
         image_idx = indices[i]
         images, bboxes = dataset.get_images_and_bounding_boxes(image_idx)
-        image_before = images[0].numpy()
-        image_after = images[1].numpy()
-        bboxes_before = bboxes[0].numpy()
-        bboxes_after = bboxes[1].numpy()
-        image_before_boxes = generate_wandb_bounding_boxes(bboxes_before, scores[i][0])
-        image_after_boxes = generate_wandb_bounding_boxes(bboxes_after, scores[i][1])
+
         title = get_example_title_from_actions_object(
             outputs["actions"],
             objects,
@@ -85,9 +146,13 @@ def plot_images(
             action_idx_to_name,
             object_idx_to_name,
         )
-        images_to_log += [image_before, image_after]
-        boxes_to_log += [image_before_boxes, image_after_boxes]
-        captions_to_log += [f"Before: {title}", f"After: {title}"]
+        object_names = [
+            object_idx_to_name[objects[i, 0, 0].item()],
+            object_idx_to_name[objects[i, 1, 0].item()],
+        ]
+        img = plot_effect_grid(images, bboxes, scores[i], object_names)
+        images_to_log.append(img)
+        captions_to_log.append(f"{title}")
 
     return images_to_log, boxes_to_log, captions_to_log
 
