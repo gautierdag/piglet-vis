@@ -9,11 +9,11 @@ from train import train
 cs = ConfigStore.instance()
 cs.store(name="base_config", node=HogConfig)
 
+
 @hydra.main(config_path="conf", config_name="config")
 def main(cfg: HogConfig) -> None:
     print(OmegaConf.to_yaml(cfg))
     seed_everything(cfg.seed)
-
     best_model_path = train(cfg, job_type="pretrain")
     print(f"Best pretrain model saved at {best_model_path}")
     best_model_path_nlu = train(cfg, job_type="nlu", best_model_path=best_model_path)

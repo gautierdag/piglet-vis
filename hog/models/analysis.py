@@ -2,8 +2,7 @@ from typing import Dict, Tuple
 
 import torch
 import wandb
-from dataset import denormalize_image
-from einops import repeat
+from einops import rearrange, repeat
 from torchtyping import TensorType
 
 from .mappings import OBJECT_ATTRIBUTES
@@ -46,39 +45,43 @@ def get_example_title_from_actions_object(
     """
     assert 0 <= index < objects.shape[0] - 1
 
-    action_text = action_idx_to_name[actions[int(index / 2)][0].item()]
-    action_object = object_idx_to_name[actions[int(index / 2)][1].item()]
-    action_receptacle = object_idx_to_name[actions[int(index / 2)][2].item()]
-    object_1 = object_idx_to_name[objects[index][0].item()]
-    object_2 = object_idx_to_name[objects[index + 1][0].item()]
+    action_text = action_idx_to_name[actions[index, 0].item()]
+    action_object = object_idx_to_name[actions[index, 1].item()]
+    action_receptacle = object_idx_to_name[actions[index, 2].item()]
+    object_1 = object_idx_to_name[objects[index, 0, 0].item()]
+    object_2 = object_idx_to_name[objects[index, 1, 0].item()]
     return f"Effects of {action_text}({action_object}, {action_receptacle}) on ({object_1},{object_2})"
 
 
 def plot_images(
-    outputs: Dict[str, torch.Tensor], action_idx_to_name: dict, object_idx_to_name: dict
+    dataset,
+    outputs: Dict[str, torch.Tensor],
+    action_idx_to_name: dict,
+    object_idx_to_name: dict,
+    num_images=16,
 ) -> Tuple[list, list, list]:
-    images = outputs["images"]
-    bboxes = outputs["image_bboxes"]
     scores = outputs["image_bbox_scores"]
+    objects = rearrange(outputs["objects_labels_pre"], "(b o) n -> b o n", o=2)
+
+    indices = outputs["indices"][:num_images]
+    scores = scores[:num_images]
 
     images_to_log = []
     boxes_to_log = []
     captions_to_log = []
-    for img_idx in range(0, images.shape[0], 2):
-        # format bounding boxes for before image
-        image_before = denormalize_image(images[img_idx]).permute(1, 2, 0).numpy()
-        image_before_boxes = generate_wandb_bounding_boxes(
-            bboxes[img_idx], scores[img_idx]
-        )
-        # format bounding boxes for after image
-        image_after = denormalize_image(images[img_idx + 1]).permute(1, 2, 0).numpy()
-        image_after_boxes = generate_wandb_bounding_boxes(
-            bboxes[img_idx + 1], scores[img_idx + 1]
-        )
+    for i in range(len(indices)):
+        image_idx = indices[i]
+        images, bboxes = dataset.get_images_and_bounding_boxes(image_idx)
+        image_before = images[0].numpy()
+        image_after = images[1].numpy()
+        bboxes_before = bboxes[0].numpy()
+        bboxes_after = bboxes[1].numpy()
+        image_before_boxes = generate_wandb_bounding_boxes(bboxes_before, scores[i][0])
+        image_after_boxes = generate_wandb_bounding_boxes(bboxes_after, scores[i][1])
         title = get_example_title_from_actions_object(
             outputs["actions"],
-            outputs["objects_labels_pre"],
-            img_idx,
+            objects,
+            i,
             action_idx_to_name,
             object_idx_to_name,
         )
@@ -187,7 +190,9 @@ def log_confusion_matrices(
         )
         try:
             logger(
-                {f"Confusion Matrices/{split}_{object_attribute_name}": confusion_matrix}
+                {
+                    f"Confusion Matrices/{split}_{object_attribute_name}": confusion_matrix
+                }
             )
         except FileNotFoundError as e:
             print(f"{e}: Error saving wandb confusion matrix to /tmp/")

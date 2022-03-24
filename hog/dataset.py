@@ -1,6 +1,9 @@
+import os
 import random
-from typing import Callable, Dict, List, Literal, Optional, Union
+from functools import lru_cache
+from typing import Callable, Dict, List, Literal, Optional, Tuple, Union
 
+import h5py
 import numpy as np
 import pytorch_lightning as pl
 import torch
@@ -8,7 +11,12 @@ from einops import rearrange
 from PIL import Image
 from tokenizers import Tokenizer
 from torch.utils.data import DataLoader, Dataset
-from transformers import AutoTokenizer, DetrFeatureExtractor
+from torchtyping import TensorType
+from tqdm import tqdm
+from transformers import AutoTokenizer
+
+from config import HogConfig
+from models.image_models import BoundingBoxImageModel, get_image_feature_extractor
 
 PigPenExample = Dict[str, Union[str, torch.Tensor]]
 
@@ -35,9 +43,9 @@ class PigPenDataset(Dataset):
         data_dir_path="../data",
         data_split: Optional[Literal["train", "val", "test"]] = "train",
         images=False,
+        images_raw=False,
         annotations=False,
         randomise_annotations=False,
-        indices=False,
     ):
         """
         Args:
@@ -47,25 +55,34 @@ class PigPenDataset(Dataset):
             annotations: if True, return the annotations as well as the action/object vectors
             randomise_annotations: if True, randomly select one of the three annotations
         """
-
         self.data_split = data_split
         self.images = images
+        self.h5py_file_path = f"{data_dir_path}/piglet.h5"
+        self.h5py_dataset_path = f"{data_split}"
         self.annotations = annotations
+
+        if self.annotations:
+            data_dir_path += "/annotated"
+
+        self.image_directory = f"{data_dir_path}/{data_split}"
+        self.images_raw = images_raw
+        image_indices_file = f"{data_dir_path}/img_indices_{data_split}.npy"
+        self.image_indices = np.load(image_indices_file)
+
         self.randomise_annotations = randomise_annotations
-        self.indices = indices
 
         self.action_matrix = np.load(f"{data_dir_path}/actions_{data_split}.npy")
         self.objects_matrix = np.load(f"{data_dir_path}/objects_{data_split}.npy")
         assert len(self.action_matrix) == len(self.objects_matrix)
-
-        if self.images:
-            image_indices_file = f"{data_dir_path}/img_indices_{data_split}.npy"
-            self.image_directory = f"{data_dir_path}/{data_split}"
-
-            self.image_indices = np.load(image_indices_file)
+        if self.images_raw:
             assert len(self.action_matrix) == len(self.image_indices)
 
+        if self.images:
+            assert os.path.exists(self.h5py_file_path), "h5py file does not exist"
+            self.h5 = h5py.File(self.h5py_file_path, "r", libver="latest", swmr=True)
+
         if self.annotations:
+            self.h5py_dataset_path += "/annotated"
             self.precondition_text = np.load(
                 f"{data_dir_path}/precondition_language_{data_split}.npy",
                 allow_pickle=True,
@@ -96,6 +113,13 @@ class PigPenDataset(Dataset):
         }
 
         if self.images:
+            hid_pre = self.h5[f"{self.h5py_dataset_path}/hidden/pre"][index]
+            hid_post = self.h5[f"{self.h5py_dataset_path}/hidden/post"][index]
+            hid_pre = torch.tensor(hid_pre)
+            hid_post = torch.tensor(hid_post)
+            item["images_hidden_states"] = torch.stack([hid_pre, hid_post])
+
+        if self.images_raw:
             image_0 = load_image_from_path(
                 f"{self.image_directory}/{self.image_indices[index]}_0.jpeg"
             )
@@ -105,7 +129,7 @@ class PigPenDataset(Dataset):
             # stack images
             images = torch.stack([image_0, image_1])
             images = rearrange(images, "i h w c -> i c h w", c=3)
-            item["images"] = images
+            item["images_raw"] = images
 
         if self.annotations:
             # Loads raw text -> note that this is yet to be tokenized at this stage
@@ -118,10 +142,144 @@ class PigPenDataset(Dataset):
             item["postcondition_text"] = self.postcondition_text[index][
                 annotation_index
             ]
-        if self.indices:
-            item["indices"] = torch.tensor(self.image_indices[index])
-
+        item["indices"] = torch.tensor(index)
         return item
+
+    @lru_cache(maxsize=32)
+    def get_images_and_bounding_boxes(
+        self, index: int
+    ) -> Tuple[
+        TensorType[2, "height", "width", "channel"], TensorType[2, "num_boxes", 4]
+    ]:
+        image_0 = load_image_from_path(
+            f"{self.image_directory}/{self.image_indices[index]}_0.jpeg"
+        )
+        image_1 = load_image_from_path(
+            f"{self.image_directory}/{self.image_indices[index]}_1.jpeg"
+        )
+        images = torch.stack([image_0, image_1])
+        with h5py.File(self.h5py_file_path, "r", libver="latest", swmr=True) as h5:
+            bboxes_pre = self.h5[f"{self.h5py_dataset_path}/bboxes/pre"][index]
+            bboxes_post = self.h5[f"{self.h5py_dataset_path}/bboxes/post"][index]
+            bboxes_pre = torch.tensor(bboxes_pre)
+            bboxes_post = torch.tensor(bboxes_post)
+            bboxes = torch.stack([bboxes_pre, bboxes_post])
+
+        return images, bboxes
+
+
+def preprocess_images(cfg: HogConfig):
+    """
+    Preprocess images for the model by running all datasets through the VisionModel
+    Saves the output representations and bounding box coordinates to a h5 file
+    This can take around 2-3 hours to run on a GPU
+    If h5 file already exists then it is loaded and the preprocessing is skipped
+    """
+    h5_file_path = f"{cfg.paths.input_dir}/piglet.h5"
+    if os.path.exists(h5_file_path):
+        return
+    print("Preprocessing images")
+
+    image_model = BoundingBoxImageModel(
+        image_model_name="detr",
+        output_dir_path=cfg.paths.output_dir,
+    )
+    if torch.cuda.is_available():
+        image_model.cuda()
+
+    image_feature_extractor = get_image_feature_extractor(cfg.paths.output_dir)
+
+    def image_only_collate(batch):
+        images = torch.stack([batch_item["images"] for batch_item in batch])
+        images = rearrange(images, "b i c h w -> (b i) c h w", c=3, i=2)
+        images = image_feature_extractor(list(images), return_tensors="pt")[
+            "pixel_values"
+        ]
+        return images
+
+    h5_file = h5py.File("piglet.h5", "w", libver="latest")
+    datasets = {"data": ["train", "val"], "data/annotated": ["train", "val", "test"]}
+    for path, splits in datasets.items():
+        for split in splits:
+            base_path = f"{split}"
+            if "annotated" in path:
+                base_path += "/annotated"
+
+            print(f"Extracting images for {base_path}")
+            dataset = PigPenDataset(
+                data_dir_path=path, images_raw=True, data_split=split
+            )
+            batch_size = 32
+            loader = DataLoader(
+                dataset,
+                batch_size=batch_size,
+                shuffle=False,
+                num_workers=cfg.num_workers,
+                pin_memory=torch.cuda.is_available(),
+                collate_fn=image_only_collate,
+            )
+
+            dataset_length = len(dataset)
+            hid_pre = h5_file.create_dataset(
+                f"{base_path}/hidden/pre",
+                shape=(dataset_length, 100, 256),
+                dtype=np.float32,
+                fillvalue=0,
+            )
+            hid_post = h5_file.create_dataset(
+                f"{base_path}/hidden/post",
+                shape=(dataset_length, 100, 256),
+                dtype=np.float32,
+                fillvalue=0,
+            )
+            bbox_pre = h5_file.create_dataset(
+                f"{base_path}/bboxes/pre",
+                shape=(dataset_length, 100, 4),
+                dtype=np.int32,
+                fillvalue=0,
+            )
+            bbox_post = h5_file.create_dataset(
+                f"{base_path}/bboxes/post",
+                shape=(dataset_length, 100, 4),
+                dtype=np.int32,
+                fillvalue=0,
+            )
+            for i, batch in tqdm(enumerate(loader), total=dataset_length // batch_size):
+                with torch.no_grad():
+                    if torch.cuda.is_available():
+                        batch.cuda()
+                    bboxes, hidden_state = image_model(batch)
+
+                    bboxes = rearrange(
+                        bboxes,
+                        "(b i) n p -> b i n p",
+                        n=100,
+                        p=4,
+                        i=2,
+                    )
+                    bboxes = bboxes.cpu().numpy()
+
+                    hidden_state = rearrange(
+                        hidden_state,
+                        "(b i) n h -> b i n h",
+                        n=100,
+                        h=256,
+                        i=2,
+                    )
+                    hidden_state = hidden_state.cpu().numpy()
+
+                    hid_pre[i * batch_size : (i + 1) * batch_size] = hidden_state[
+                        :, 0, :, :
+                    ]
+                    hid_post[i * batch_size : (i + 1) * batch_size] = hidden_state[
+                        :, 1, :, :
+                    ]
+                    bbox_pre[i * batch_size : (i + 1) * batch_size] = bboxes[:, 0, :, :]
+                    bbox_post[i * batch_size : (i + 1) * batch_size] = bboxes[
+                        :, 1, :, :
+                    ]
+    h5_file.close()
+    del image_model
 
 
 def collate_fn_generator(
@@ -160,7 +318,7 @@ def collate_fn_generator(
                     return_tensors="pt",
                     truncation=True,
                 )
-            elif "images" in key:
+            elif "images_raw" in key:
                 assert (
                     image_feature_extractor is not None
                 ), "image feature extractor not provided"
@@ -188,7 +346,6 @@ class PigPenDataModule(pl.LightningDataModule):
         randomise_annotations=False,
         bert_model: str = "roberta-base",
         vision_model: str = "detr",
-        indices=False,
         num_workers=4,
     ):
         super().__init__()
@@ -201,7 +358,6 @@ class PigPenDataModule(pl.LightningDataModule):
         self.bert_model = bert_model
         self.vision_model = vision_model
         self.num_workers = num_workers
-        self.indices = indices
 
     def setup(self, stage: Optional[str] = None):
         """
@@ -214,7 +370,6 @@ class PigPenDataModule(pl.LightningDataModule):
             images=self.images,
             annotations=self.annotations,
             randomise_annotations=self.randomise_annotations,
-            indices=self.indices,
         )
         self.pigpen_val = PigPenDataset(
             data_dir_path=self.data_dir_path,
@@ -222,7 +377,6 @@ class PigPenDataModule(pl.LightningDataModule):
             images=self.images,
             annotations=self.annotations,
             randomise_annotations=self.randomise_annotations,
-            indices=self.indices,
         )
         self.collate_fn = None
         tokenizer = None
@@ -245,16 +399,7 @@ class PigPenDataModule(pl.LightningDataModule):
 
         # if using vision then we need the transform and load operation to apply to images
         if self.images:
-            if self.vision_model == "detr":
-                image_feature_extractor = DetrFeatureExtractor.from_pretrained(
-                    "facebook/detr-resnet-50",
-                    cache_dir=f"{self.output_dir_path}/vision_model/detr",
-                    do_resize=False,
-                    do_normalize=True,
-                )
-            else:
-                raise NotImplemented(f"Image model {self.vision_model} not implemented")
-
+            image_feature_extractor = get_image_feature_extractor(self.output_dir_path)
         if tokenizer is not None or image_feature_extractor is not None:
             self.collate_fn = collate_fn_generator(
                 tokenizer=tokenizer, image_feature_extractor=image_feature_extractor

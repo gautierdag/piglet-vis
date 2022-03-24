@@ -36,6 +36,7 @@ class Piglet(pl.LightningModule):
         num_heads=4,
         dropout=0.1,
         object_embedding_size=329,
+        image_hidden_input_size=256,
         num_attributes=38,
         none_object_index=102,
         action_embedding_size=10,
@@ -45,6 +46,7 @@ class Piglet(pl.LightningModule):
         bert_model_name="roberta-base",
         encode_images=False,
         fuse_images=False,
+        num_images_to_log=16,
     ):
         """
         Args:
@@ -75,6 +77,8 @@ class Piglet(pl.LightningModule):
         self.pretrain = pretrain
         self.encode_images = encode_images
         self.fuse_images = fuse_images
+        self.image_hidden_input_size = image_hidden_input_size
+        self.num_images_to_log = num_images_to_log
 
         if fuse_images:
             assert encode_images, "encode_images must be True with fuse_images"
@@ -85,7 +89,8 @@ class Piglet(pl.LightningModule):
                 object_embedding_size, hidden_size, padding_idx=none_object_index
             )
             self.image_encoder = PigletImageEncoder(
-                hidden_size=hidden_size, output_dir_path=output_dir_path
+                hidden_input_size=image_hidden_input_size,
+                hidden_size=hidden_size,
             )
 
         else:
@@ -138,10 +143,16 @@ class Piglet(pl.LightningModule):
         self.object_attributes_idx_to_mapper = get_objects_mapper(data_dir_path)
 
     def forward(
-        self, objects, actions, action_text=None, images=None, training=True, **kwargs
+        self,
+        objects,
+        actions,
+        action_text=None,
+        images_hidden_states=None,
+        # training=True,
+        **kwargs,
     ):
         # check that image inputs are not passed if no image encoder and vice versa
-        assert (images is None) == (not self.encode_images)
+        assert (images_hidden_states is None) == (not self.encode_images)
 
         if self.pretrain:
             # sum the embedding of object targeted and its receptacle
@@ -159,17 +170,18 @@ class Piglet(pl.LightningModule):
                 action_text["input_ids"], action_text["attention_mask"]
             )
 
-        image_model_outputs = None
+        bbox_scores = None
         if self.encode_images:
             # even if we only use images we still need an object_embedding layer for the object names
             object_names = self.object_embedding_layer(objects[:, :, 0])
             conditional_vector = torch.cat(
                 (repeat(h_a, "b h -> b 4 h"), object_names), dim=2
             )
-            image_model_outputs = self.image_encoder(
-                images, conditional_vector, training=training
+            h_o, bbox_scores = self.image_encoder(
+                images_hidden_states,
+                conditional_vector,
             )
-            h_o = image_model_outputs["h_i_o"]
+            # h_o = image_model_outputs["h_i_o"]
         else:
             # embed object vector
             h_o = self.object_encoder(objects)
@@ -191,10 +203,10 @@ class Piglet(pl.LightningModule):
 
         # returns predicted sequence of object attributes
         # torch.Size([batch_size*2, num_attributes, object_embedding_size])
-        if self.encode_images and not training and image_model_outputs is not None:
-            return h_o_post_pred, h_o_pre_pred, image_model_outputs
+        # if self.encode_images and not training and image_model_outputs is not None:
+        # return h_o_post_pred, h_o_pre_pred, image_model_outputs
 
-        return h_o_post_pred, h_o_pre_pred, None
+        return h_o_post_pred, h_o_pre_pred, bbox_scores
 
     def calculate_object_attribute_loss_and_predictions(
         self,
@@ -261,9 +273,8 @@ class Piglet(pl.LightningModule):
         objects_labels_post = objects[:, [2, 3], :]
 
         # encode objects and actions, apply action, and predict resulting object attributes
-        h_o_post_ouput, h_o_pre_ouput, image_outputs = self(
+        h_o_post_ouput, h_o_pre_ouput, bbox_scores = self(
             **batch,
-            training=False,
         )
         _, predictions = self.calculate_joint_object_attribute_loss_and_predictions(
             h_o_pre_ouput, h_o_post_ouput, objects, split=split
@@ -273,16 +284,14 @@ class Piglet(pl.LightningModule):
             "objects_labels_pre": objects_labels_pre.cpu(),
             "objects_labels_post": objects_labels_post.cpu(),
             "actions": batch["actions"].cpu(),
+            "indices": batch["indices"].cpu(),
         }
-        if batch_idx == 0 and "images" in batch and image_outputs is not None:
-            results["images"] = batch["images"].cpu()
-            results["image_bboxes"] = image_outputs["bboxes"].cpu()
-            results["image_bbox_scores"] = image_outputs["bbox_scores"].cpu()
+        if bbox_scores is not None:
+            results["image_bbox_scores"] = bbox_scores.cpu()
+
         return results
 
-    def calculate_epoch_end_statistics(
-        self, step_outputs, split="val", log_images=False
-    ) -> None:
+    def calculate_epoch_end_statistics(self, step_outputs, split="val") -> None:
 
         """
         Calculate epoch statistics (accuracy) over entire validation set
@@ -293,16 +302,16 @@ class Piglet(pl.LightningModule):
             - average accuracy per action
         For all accuracies we exclude none objects from the calculation
         """
-
         outputs = defaultdict(list)
         for step_output in step_outputs:
             for output_name, step_output in step_output.items():
                 outputs[output_name] += step_output
 
         for output_name in outputs.keys():
-            if "image" in output_name:
-                # only care about a single batch of images
-                outputs[output_name] = step_outputs[0][output_name]
+            if output_name == "indices":
+                outputs[output_name] = torch.tensor(outputs[output_name])
+            elif output_name == "image_bbox_scores":
+                outputs[output_name] = torch.stack(outputs[output_name])
             else:
                 # concat batches into tensors of shape (num_batches*num_objects, num_attributes)
                 outputs[output_name] = torch.concat(
@@ -369,11 +378,18 @@ class Piglet(pl.LightningModule):
             split=split,
         )
 
-        if "images" in outputs and log_images:
+        if self.encode_images:
+            if split == "val":
+                dataset = self.trainer.datamodule.pigpen_val
+            else:
+                dataset = self.trainer.datamodule.pigpen_test
+
             images_to_log, boxes_to_log, captions_to_log = plot_images(
+                dataset,
                 outputs,
                 self.action_idx_to_name,
                 self.object_attributes_idx_to_mapper[0],
+                num_images=self.num_images_to_log,
             )
             self.logger.log_image(
                 "Images",
@@ -392,9 +408,7 @@ class Piglet(pl.LightningModule):
         return self.process_inference_batch(batch, batch_idx, split="test")
 
     def test_epoch_end(self, test_step_outputs) -> None:
-        self.calculate_epoch_end_statistics(
-            test_step_outputs, split="test", log_images=True
-        )
+        self.calculate_epoch_end_statistics(test_step_outputs, split="test")
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
         return torch.optim.Adam(self.parameters(), lr=self.learning_rate)

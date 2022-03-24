@@ -1,5 +1,6 @@
 import glob
 import os
+from pathlib import Path
 from typing import Tuple
 
 import pytorch_lightning as pl
@@ -9,7 +10,7 @@ from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.plugins import DDPPlugin
 
 from config import HogConfig
-from dataset import PigPenDataModule
+from dataset import PigPenDataModule, preprocess_images
 from models.model import Piglet
 
 
@@ -18,7 +19,7 @@ def get_unique_run_name(checkpoint_path: str, seed: int) -> Tuple[str, bool]:
     if os.path.exists(checkpoint_path):
         checkpoints = glob.glob(f"{checkpoint_path}/*.ckpt")
         if len(checkpoints) == 1:
-            return checkpoints[0].split(".ckpt")[0], True
+            return Path(checkpoints[0]).stem, True
     # else return get_unique_run_name, False (not resuming)
     unique_run_name = f"{seed}_{wandb.util.generate_id()}"
     return unique_run_name, False
@@ -33,17 +34,18 @@ def train(cfg: HogConfig, job_type="pretrain", best_model_path=None) -> str:
 
     :return: path to the best model
     """
+    if cfg.images:
+        preprocess_images(cfg)
+
     # Determine name of run and unique id (if not resuming)
     run_name = f"{cfg.run_name}_{cfg.seed}"
 
     if job_type == "pretrain":
-        data_dir_path = cfg.paths.input_dir
         annotations = False
         pretrain = True
     elif job_type == "nlu":
         assert best_model_path is not None, "Must provide best_model_path for nlu"
         run_name += "_nlu"
-        data_dir_path = f"{cfg.paths.input_dir}/annotated"
         annotations = True
         pretrain = False
     else:
@@ -66,7 +68,7 @@ def train(cfg: HogConfig, job_type="pretrain", best_model_path=None) -> str:
 
     print("Loading dataset")
     pigpen = PigPenDataModule(
-        data_dir_path=data_dir_path,
+        data_dir_path=cfg.paths.input_dir,
         batch_size=cfg[job_type].batch_size,
         images=cfg.images,
         annotations=annotations,
@@ -131,6 +133,8 @@ def train(cfg: HogConfig, job_type="pretrain", best_model_path=None) -> str:
         print("Testing...")
         trainer.test(model, datamodule=pigpen)
 
+    if not cfg.fast:
+        wandb.save(checkpoint_callback.best_model_path)
     wandb.finish()
 
     return checkpoint_callback.best_model_path
