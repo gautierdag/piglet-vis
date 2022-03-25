@@ -1,5 +1,8 @@
 from typing import Dict, Tuple
 
+import matplotlib
+
+matplotlib.use("Agg")
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
@@ -11,9 +14,6 @@ from PIL import Image
 from torchtyping import TensorType
 
 from .mappings import OBJECT_ATTRIBUTES
-
-# import matplotlib
-# matplotlib.use("Agg")
 
 
 def get_cmap(cm="jet", N=256):
@@ -68,8 +68,11 @@ def plot_effect_grid(images, bboxes, scores, objects):
     plt.subplots_adjust(wspace=0, hspace=0)
 
     canvas.draw()
+
     image_from_plot = np.frombuffer(canvas.tostring_rgb(), dtype=np.uint8)
     image_from_plot = image_from_plot.reshape(canvas.get_width_height()[::-1] + (3,))
+
+    plt.close(fig)
 
     return Image.fromarray(image_from_plot)
 

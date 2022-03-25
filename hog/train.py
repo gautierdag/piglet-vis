@@ -132,7 +132,7 @@ def train(cfg: HogConfig, job_type="pretrain", best_model_path=None) -> str:
         trainer.test(model, datamodule=pigpen)
 
     if not cfg.fast:
-        wandb.save(checkpoint_callback.best_model_path, base_path="/checkpoints")
+        wandb.save(checkpoint_callback.best_model_path)
     wandb.finish()
 
     return checkpoint_callback.best_model_path
