@@ -1,4 +1,4 @@
-from typing import Dict, Tuple
+from typing import Dict, List, Tuple
 
 import matplotlib
 
@@ -48,7 +48,7 @@ def turn_off_axis(ax):
     ax.spines["left"].set_visible(False)
 
 
-def plot_effect_grid(images, bboxes, scores, objects):
+def plot_effect_grid(images, bboxes, scores, objects) -> Image.Image:
     dpi = 100
     sizes = np.shape(images[0])
     fig, axs = plt.subplots(
@@ -128,7 +128,7 @@ def plot_images(
     action_idx_to_name: dict,
     object_idx_to_name: dict,
     num_images=16,
-) -> Tuple[list, list, list]:
+) -> Tuple[List[Image.Image], List[str]]:
     scores = outputs["image_bbox_scores"]
     objects = rearrange(outputs["objects_labels_pre"], "(b o) n -> b o n", o=2)
 
@@ -136,7 +136,6 @@ def plot_images(
     scores = scores[:num_images]
 
     images_to_log = []
-    boxes_to_log = []
     captions_to_log = []
     for i in range(len(indices)):
         image_idx = indices[i]
@@ -157,7 +156,7 @@ def plot_images(
         images_to_log.append(img)
         captions_to_log.append(f"{title}")
 
-    return images_to_log, boxes_to_log, captions_to_log
+    return images_to_log, captions_to_log
 
 
 def calculate_average_accuracy(

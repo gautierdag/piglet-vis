@@ -384,7 +384,7 @@ class Piglet(pl.LightningModule):
             else:
                 dataset = self.trainer.datamodule.pigpen_test
 
-            images_to_log, boxes_to_log, captions_to_log = plot_images(
+            images_to_log, captions_to_log = plot_images(
                 dataset,
                 outputs,
                 self.action_idx_to_name,
@@ -394,7 +394,6 @@ class Piglet(pl.LightningModule):
             self.logger.log_image(
                 "Images",
                 images_to_log,
-                # boxes=boxes_to_log,
                 caption=captions_to_log,
             )
 
