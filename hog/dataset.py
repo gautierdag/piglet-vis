@@ -185,8 +185,12 @@ def preprocess_images(cfg: HogConfig):
         image_model_name="detr",
         output_dir_path=cfg.paths.output_dir,
     )
+    device = "cpu"
     if torch.cuda.is_available():
-        image_model.cuda()
+        print("cuda available")
+        device = "cuda"
+
+    image_model = image_model.to(device)
 
     image_feature_extractor = get_image_feature_extractor(cfg.paths.output_dir)
 
@@ -250,10 +254,8 @@ def preprocess_images(cfg: HogConfig):
             )
             for i, batch in tqdm(enumerate(loader), total=dataset_length // batch_size):
                 with torch.no_grad():
-                    if torch.cuda.is_available():
-                        batch.cuda()
+                    batch = batch.to(device)
                     bboxes, hidden_state = image_model(batch)
-
                     bboxes = rearrange(
                         bboxes,
                         "(b i) n p -> b i n p",
