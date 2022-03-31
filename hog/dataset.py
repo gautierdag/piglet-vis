@@ -202,7 +202,8 @@ def preprocess_images(cfg: HogConfig):
         ]
         return images
 
-    h5_file = h5py.File("piglet.h5", "w", libver="latest")
+    print(f"Creating h5 file at {h5_file_path}")
+    h5_file = h5py.File(h5_file_path, "w", libver="latest")
     datasets = {
         f"{cfg.paths.input_dir}": ["train", "val"],
         f"{cfg.paths.input_dir}/annotated": ["train", "val", "test"],
