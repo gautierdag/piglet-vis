@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Optional
 
 
 @dataclass
@@ -15,6 +16,7 @@ class Model:
     bert_model: str
     dropout: float
     fuse_images: bool
+    no_symbolic: bool
 
 
 @dataclass
@@ -22,6 +24,7 @@ class Train:
     batch_size: int
     max_epochs: int
     learning_rate: float
+    checkpoint_path: Optional[str] = None
 
 
 @dataclass

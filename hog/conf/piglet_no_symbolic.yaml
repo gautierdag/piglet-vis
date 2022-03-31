@@ -3,11 +3,11 @@ defaults:
   - base_config 
   - _self_
 
-run_name: "images_fuse_64h_6l"
+run_name: "piglet_no_symbolic"
 gpus: "1"
 seed: 42
 fast: false
-images: true
+images: false
 num_workers: 6
 
 hydra:
@@ -22,14 +22,14 @@ paths:
   output_dir: "${hydra:runtime.cwd}/output"
 
 model:
-  hidden_size: 64
-  num_layers: 6
+  hidden_size: 128
+  num_layers: 3
   num_heads: 4
   bert_model: "roberta-base"
   dropout: 0.1
-  fuse_images: true
-  no_symbolic: false
-  
+  fuse_images: false
+  no_symbolic: true
+
 pretrain:
   batch_size: 256
   max_epochs: 80

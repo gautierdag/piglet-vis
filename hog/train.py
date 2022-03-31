@@ -1,8 +1,3 @@
-import glob
-import os
-from pathlib import Path
-from typing import Tuple
-
 import pytorch_lightning as pl
 import wandb
 from pytorch_lightning.callbacks import ModelCheckpoint
@@ -14,23 +9,18 @@ from dataset import PigPenDataModule, preprocess_images
 from models.model import Piglet
 
 
-def get_unique_run_name(checkpoint_path: str, seed: int) -> Tuple[str, bool]:
-    # if directory exists and there is only one checkpoint
-    if os.path.exists(checkpoint_path):
-        checkpoints = glob.glob(f"{checkpoint_path}/*.ckpt")
-        if len(checkpoints) == 1:
-            return Path(checkpoints[0]).stem, True
-    # else return get_unique_run_name, False (not resuming)
-    unique_run_name = f"{seed}_{wandb.util.generate_id()}"
-    return unique_run_name, False
-
-
-def train(cfg: HogConfig, job_type="pretrain", best_model_path=None) -> str:
+def train(
+    cfg: HogConfig,
+    job_type="pretrain",
+    best_model_path=None,
+    resume_from_checkpoint=None,
+) -> str:
     """
     Train the model for different modes (pretrain/nlu).
     :param cfg: Config object
     :param job_type: pretrain or nlu
     :param best_model_path: path to the best model
+    :param resume_from_checkpoint: checkpoint unique id to resume training from
 
     :return: path to the best model
     """
@@ -51,8 +41,12 @@ def train(cfg: HogConfig, job_type="pretrain", best_model_path=None) -> str:
     else:
         raise NotImplementedError(f"job_type {job_type} not implemented")
 
+    resume_training = False
+    unique_run_name = f"{cfg.seed}_{wandb.util.generate_id()}"
     checkpoint_path = f"{cfg.paths.output_dir}/checkpoints/{run_name}"
-    unique_run_name, resume_training = get_unique_run_name(checkpoint_path, cfg.seed)
+    if resume_from_checkpoint is not None:
+        resume_training = True
+        unique_run_name = resume_from_checkpoint
 
     wandb_logger = WandbLogger(
         name=run_name,
@@ -97,6 +91,7 @@ def train(cfg: HogConfig, job_type="pretrain", best_model_path=None) -> str:
             fuse_images=cfg.model.fuse_images,
             learning_rate=cfg[job_type].learning_rate,
             pretrain=pretrain,
+            no_symbolic=cfg.model.no_symbolic,
         )
 
     print("Creating Trainer")
@@ -113,7 +108,7 @@ def train(cfg: HogConfig, job_type="pretrain", best_model_path=None) -> str:
         gpus=cfg.gpus,
         callbacks=[checkpoint_callback],
         fast_dev_run=cfg.fast,
-        strategy=DDPPlugin(find_unused_parameters=False),
+        strategy=DDPPlugin(find_unused_parameters=cfg.model.no_symbolic),
     )
 
     print("Training...")

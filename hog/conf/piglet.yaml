@@ -28,16 +28,19 @@ model:
   bert_model: "roberta-base"
   dropout: 0.1
   fuse_images: false
+  no_symbolic: false
 
 pretrain:
   batch_size: 256
-  max_epochs: 20
+  max_epochs: 80
   learning_rate: 0.001
+  checkpoint_path: null
 
 nlu:
   batch_size: 64
   max_epochs: 80
   learning_rate: 0.00001
+  checkpoint_path: null
 
 
 

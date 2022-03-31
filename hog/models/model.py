@@ -47,6 +47,7 @@ class Piglet(pl.LightningModule):
         encode_images=False,
         fuse_images=False,
         num_images_to_log=16,
+        no_symbolic=False,
     ):
         """
         Args:
@@ -79,6 +80,7 @@ class Piglet(pl.LightningModule):
         self.fuse_images = fuse_images
         self.image_hidden_input_size = image_hidden_input_size
         self.num_images_to_log = num_images_to_log
+        self.no_symbolic = no_symbolic
 
         if fuse_images:
             assert encode_images, "encode_images must be True with fuse_images"
@@ -92,7 +94,6 @@ class Piglet(pl.LightningModule):
                 hidden_input_size=image_hidden_input_size,
                 hidden_size=hidden_size,
             )
-
         else:
             # Object Encoder Model
             self.object_encoder = PigletObjectEncoder(
@@ -148,7 +149,6 @@ class Piglet(pl.LightningModule):
         actions,
         action_text=None,
         images_hidden_states=None,
-        # training=True,
         **kwargs,
     ):
         # check that image inputs are not passed if no image encoder and vice versa
@@ -181,7 +181,8 @@ class Piglet(pl.LightningModule):
                 images_hidden_states,
                 conditional_vector,
             )
-            # h_o = image_model_outputs["h_i_o"]
+        elif self.no_symbolic:  # no symbolic object or images - just object names
+            h_o = self.object_encoder.object_embedding_layer(objects[:, :, 0])
         else:
             # embed object vector
             h_o = self.object_encoder(objects)
@@ -200,11 +201,6 @@ class Piglet(pl.LightningModule):
 
         h_o_a_init = torch.zeros_like(h_o_a)
         h_o_pre_pred = self.object_decoder(h_o_a_init, h_o_pre)
-
-        # returns predicted sequence of object attributes
-        # torch.Size([batch_size*2, num_attributes, object_embedding_size])
-        # if self.encode_images and not training and image_model_outputs is not None:
-        # return h_o_post_pred, h_o_pre_pred, image_model_outputs
 
         return h_o_post_pred, h_o_pre_pred, bbox_scores
 
