@@ -9,3 +9,5 @@ hydra-core
 torchtyping
 transformers
 einops
+h5py
+matplotlib

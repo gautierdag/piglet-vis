@@ -199,7 +199,10 @@ def preprocess_images(cfg: HogConfig):
         return images
 
     h5_file = h5py.File("piglet.h5", "w", libver="latest")
-    datasets = {"data": ["train", "val"], "data/annotated": ["train", "val", "test"]}
+    datasets = {
+        f"{cfg.paths.input_dir}": ["train", "val"],
+        f"{cfg.paths.input_dir}/annotated": ["train", "val", "test"],
+    }
     for path, splits in datasets.items():
         for split in splits:
             base_path = f"{split}"
