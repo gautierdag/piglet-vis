@@ -78,7 +78,7 @@ class BoundingBoxImageModel(nn.Module):
 class PigletImageEncoder(nn.Module):
     def __init__(self, hidden_size=256, hidden_input_size=256):
         super().__init__()
-        self.conditional_fc = nn.Linear(hidden_size * 2, hidden_input_size)
+        self.conditional_fc = nn.Linear(hidden_size, hidden_input_size)
         # map to smaller dimensionality
         self.fc = nn.Linear(hidden_input_size, hidden_size)
 
@@ -108,8 +108,8 @@ class PigletImageEncoder(nn.Module):
         attention_scores = (
             (h_c * h_i).sum(-1).softmax(-1).unsqueeze(-1)
         )  # [b, i, o, n, 1]
-         
-        h_i_o = (h_i * attention_scores).sum(3) # [b, i, o, h]
+
+        h_i_o = (h_i * attention_scores).sum(3)  # [b, i, o, h]
 
         # map to lower dimension
         h_i_o = self.fc(h_i_o)

@@ -3,7 +3,7 @@ defaults:
   - base_config 
   - _self_
 
-run_name: "images_fuse_64h_6l"
+run_name: "images_fuse"
 gpus: "1"
 seed: 42
 fast: false
@@ -23,7 +23,7 @@ paths:
 
 model:
   hidden_size: 64
-  num_layers: 6
+  num_layers: 1
   num_heads: 4
   bert_model: "roberta-base"
   dropout: 0.1
@@ -31,7 +31,7 @@ model:
   no_symbolic: false
   
 pretrain:
-  batch_size: 256
+  batch_size: 1024
   max_epochs: 80
   learning_rate: 0.001
   checkpoint_path: null

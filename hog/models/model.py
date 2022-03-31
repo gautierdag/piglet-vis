@@ -172,11 +172,8 @@ class Piglet(pl.LightningModule):
 
         bbox_scores = None
         if self.encode_images:
-            # even if we only use images we still need an object_embedding layer for the object names
-            object_names = self.object_embedding_layer(objects[:, :, 0])
-            conditional_vector = torch.cat(
-                (repeat(h_a, "b h -> b 4 h"), object_names), dim=2
-            )
+            # even if we only use images we still need an object_embedding layer to condition on the object names
+            conditional_vector = self.object_embedding_layer(objects[:, :, 0])
             h_o, bbox_scores = self.image_encoder(
                 images_hidden_states,
                 conditional_vector,
@@ -388,7 +385,7 @@ class Piglet(pl.LightningModule):
                 num_images=self.num_images_to_log,
             )
             self.logger.log_image(
-                "Images",
+                f"Images {split}",
                 images_to_log,
                 caption=captions_to_log,
             )
