@@ -191,7 +191,7 @@ def preprocess_images(cfg: HogConfig):
     image_feature_extractor = get_image_feature_extractor(cfg.paths.output_dir)
 
     def image_only_collate(batch):
-        images = torch.stack([batch_item["images"] for batch_item in batch])
+        images = torch.stack([batch_item["images_raw"] for batch_item in batch])
         images = rearrange(images, "b i c h w -> (b i) c h w", c=3, i=2)
         images = image_feature_extractor(list(images), return_tensors="pt")[
             "pixel_values"
