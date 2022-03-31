@@ -9,7 +9,6 @@ seed: 42
 fast: false
 images: true
 num_workers: 6
-no_symbolic: false
 
 hydra:
   output_subdir: null
