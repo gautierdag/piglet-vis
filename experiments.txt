@@ -1,6 +1,4 @@
- python hog/main.py --config-name images_base ++run_name=images_base_256h_3l ++model.hidden_size=256 ++model.num_layers=3 ++pretrain.batch_size=256
- python hog/main.py --config-name images_fuse ++run_name=images_fuse_256h_3l ++model.hidden_size=256 ++model.num_layers=3 ++pretrain.batch_size=256
- python hog/main.py --config-name piglet ++run_name=piglet_256h_3l ++model.hidden_size=256 ++model.num_layers=3 ++pretrain.batch_size=256
- python hog/main.py --config-name piglet_no_symbolic ++run_name=piglet_no_symbolic_256h_3l ++model.hidden_size=256 ++model.num_layers=3 ++pretrain.batch_size=256
- 
- 
+python hog/main.py --config-name images_base ++run_name=images_base_256h_3l ++model.hidden_size=256 ++model.num_layers=3 ++pretrain.batch_size=256
+python hog/main.py --config-name images_fuse ++run_name=images_fuse_256h_3l ++model.hidden_size=256 ++model.num_layers=3 ++pretrain.batch_size=256
+python hog/main.py --config-name piglet ++run_name=piglet_256h_3l ++model.hidden_size=256 ++model.num_layers=3 ++pretrain.batch_size=256
+python hog/main.py --config-name piglet_no_symbolic ++run_name=piglet_no_symbolic_256h_3l ++model.hidden_size=256 ++model.num_layers=3 ++pretrain.batch_size=256
