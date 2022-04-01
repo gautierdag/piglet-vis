@@ -28,7 +28,7 @@ def train(
         preprocess_images(cfg)
 
     # Determine name of run and unique id (if not resuming)
-    run_name = f"{cfg.run_name}_{cfg.seed}"
+    run_name = f"{cfg.run_name}_h{cfg.model.hidden_size}_l{cfg.model.num_layers}_{cfg.seed}"
 
     if job_type == "pretrain":
         annotations = False
