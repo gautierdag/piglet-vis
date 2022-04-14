@@ -4,7 +4,6 @@ from typing import Dict, Tuple
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
-from einops import repeat
 from torchtyping import TensorType
 
 from .action_models import (
@@ -281,6 +280,8 @@ class Piglet(pl.LightningModule):
         }
         if bbox_scores is not None:
             results["image_bbox_scores"] = bbox_scores.cpu()
+        if "seen" in batch:
+            results["seen"] = batch["seen"].cpu()
 
         return results
 

@@ -72,6 +72,13 @@ class PigPenDataset(Dataset):
         self.randomise_annotations = randomise_annotations
 
         self.action_matrix = np.load(f"{data_dir_path}/actions_{data_split}.npy")
+
+        # seen matrix controls what objects to show during training/validation
+        self.seen_matrix = np.load(f"{data_dir_path}/seen_{data_split}.npy")
+        if self.data_split != "test":
+            # if not test then we only select indices where True
+            self.seen_matrix = np.where(self.seen_matrix)[0]
+
         self.objects_matrix = np.load(f"{data_dir_path}/objects_{data_split}.npy")
         assert len(self.action_matrix) == len(self.objects_matrix)
         if self.images_raw:
@@ -101,9 +108,12 @@ class PigPenDataset(Dataset):
             assert self.postcondition_text.shape[1] == 3
 
     def __len__(self):
-        return len(self.action_matrix)
+        return len(self.seen_matrix)
 
     def __getitem__(self, index: int) -> PigPenExample:
+        if self.data_split != "test":
+            index = self.seen_matrix[index]
+
         action_vector = self.action_matrix[index]
         objects_vector = self.objects_matrix[index]
 
@@ -143,6 +153,11 @@ class PigPenDataset(Dataset):
                 annotation_index
             ]
         item["indices"] = torch.tensor(index)
+
+        # track seen examples
+        if self.data_split == "test":
+            item["seen"] = torch.tensor(self.seen_matrix[index])
+
         return item
 
     @lru_cache(maxsize=32)

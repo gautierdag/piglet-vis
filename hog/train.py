@@ -1,8 +1,10 @@
 import pytorch_lightning as pl
 import wandb
 from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from pytorch_lightning.loggers import WandbLogger
-from pytorch_lightning.plugins import DDPPlugin
+from pytorch_lightning.strategies import DDPStrategy
+from zmq import device
 
 from config import HogConfig
 from dataset import PigPenDataModule, preprocess_images
@@ -28,7 +30,9 @@ def train(
         preprocess_images(cfg)
 
     # Determine name of run and unique id (if not resuming)
-    run_name = f"{cfg.run_name}_h{cfg.model.hidden_size}_l{cfg.model.num_layers}_{cfg.seed}"
+    run_name = (
+        f"{cfg.run_name}_h{cfg.model.hidden_size}_l{cfg.model.num_layers}_{cfg.seed}"
+    )
 
     if job_type == "pretrain":
         annotations = False
@@ -102,13 +106,15 @@ def train(
         filename=unique_run_name,
     )
 
+    early_stopping_callback = EarlyStopping(monitor="val_loss", mode="min", patience=10)
+
     trainer = pl.Trainer(
         max_epochs=cfg[job_type].max_epochs,
         logger=wandb_logger,
         gpus=cfg.gpus,
-        callbacks=[checkpoint_callback],
+        callbacks=[early_stopping_callback, checkpoint_callback],
         fast_dev_run=cfg.fast,
-        strategy=DDPPlugin(find_unused_parameters=cfg.model.no_symbolic),
+        strategy=DDPStrategy(find_unused_parameters=cfg.model.no_symbolic),
     )
 
     print("Training...")
@@ -126,8 +132,6 @@ def train(
         print("Testing...")
         trainer.test(model, datamodule=pigpen)
 
-    if not cfg.fast:
-        wandb.save(checkpoint_callback.best_model_path)
     wandb.finish()
 
     return checkpoint_callback.best_model_path
