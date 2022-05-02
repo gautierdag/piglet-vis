@@ -3,11 +3,11 @@ defaults:
   - base_config 
   - _self_
 
-run_name: "piglet"
+run_name: "images_embed_names"
 gpus: "1"
 seed: 42
 fast: false
-images: false
+images: true
 num_workers: 6
 
 hydra:
@@ -22,17 +22,17 @@ paths:
   output_dir: "${hydra:runtime.cwd}/output"
 
 model:
-  hidden_size: 128
+  hidden_size: 64
   num_layers: 3
   num_heads: 4
   bert_model: "roberta-base"
   dropout: 0.1
-  fuse_images: false
+  fuse_images: true
   no_symbolic: false
-  object_name_embeddings: false
-
+  object_name_embeddings: true
+  
 pretrain:
-  batch_size: 256
+  batch_size: 512
   max_epochs: 80
   learning_rate: 0.001
   checkpoint_path: null

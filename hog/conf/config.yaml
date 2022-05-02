@@ -7,8 +7,8 @@ run_name: "test"
 gpus: "1"
 seed: 42
 fast: false
-images: false
-num_workers: 6
+images: true
+num_workers: 1
 
 hydra:
   output_subdir: null
@@ -29,6 +29,7 @@ model:
   dropout: 0.1
   fuse_images: false
   no_symbolic: false
+  object_name_embeddings: true
 
 pretrain:
   batch_size: 16

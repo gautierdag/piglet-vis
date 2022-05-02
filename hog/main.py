@@ -17,7 +17,6 @@ def main(cfg: HogConfig) -> None:
     best_model_path = train(
         cfg, job_type="pretrain", resume_from_checkpoint=cfg.pretrain.checkpoint_path
     )
-    # best_model_path = "/home/gautier/Desktop/hog/output/checkpoints/images_fuse_h64_l3_42/42_10d9fv06.ckpt"
     print(f"Best pretrain model saved at {best_model_path}")
     best_model_path_nlu = train(
         cfg,

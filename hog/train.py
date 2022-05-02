@@ -4,7 +4,6 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.strategies import DDPStrategy
-from zmq import device
 
 from config import HogConfig
 from dataset import PigPenDataModule, preprocess_images
@@ -71,6 +70,7 @@ def train(
         images=cfg.images,
         annotations=annotations,
         num_workers=cfg.num_workers,
+        object_name_embeddings=cfg.model.object_name_embeddings,
     )
 
     if best_model_path:
@@ -96,6 +96,7 @@ def train(
             learning_rate=cfg[job_type].learning_rate,
             pretrain=pretrain,
             no_symbolic=cfg.model.no_symbolic,
+            object_name_embeddings=cfg.model.object_name_embeddings,
         )
 
     print("Creating Trainer")

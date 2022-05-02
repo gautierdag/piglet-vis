@@ -4,6 +4,7 @@ from typing import Dict, Tuple
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
+from einops import repeat
 from torchtyping import TensorType
 
 from .action_models import (
@@ -47,6 +48,7 @@ class Piglet(pl.LightningModule):
         fuse_images=False,
         num_images_to_log=16,
         no_symbolic=False,
+        object_name_embeddings=False,
     ):
         """
         Args:
@@ -80,15 +82,19 @@ class Piglet(pl.LightningModule):
         self.image_hidden_input_size = image_hidden_input_size
         self.num_images_to_log = num_images_to_log
         self.no_symbolic = no_symbolic
+        self.object_name_embeddings = object_name_embeddings
 
         if fuse_images:
             assert encode_images, "encode_images must be True with fuse_images"
 
         # Image encoder
         if self.encode_images:
-            self.object_embedding_layer = nn.Embedding(
-                object_embedding_size, hidden_size, padding_idx=none_object_index
-            )
+            if self.object_name_embeddings:
+                self.object_name_embedding_layer = nn.Linear(768, hidden_size)
+            else:
+                self.object_embedding_layer = nn.Embedding(
+                    object_embedding_size, hidden_size, padding_idx=none_object_index
+                )
             self.image_encoder = PigletImageEncoder(
                 hidden_input_size=image_hidden_input_size,
                 hidden_size=hidden_size,
@@ -148,6 +154,8 @@ class Piglet(pl.LightningModule):
         actions,
         action_text=None,
         images_hidden_states=None,
+        object_name_embeddings=None,
+        action_object_name_embeddings=None,
         **kwargs,
     ):
         # check that image inputs are not passed if no image encoder and vice versa
@@ -156,9 +164,14 @@ class Piglet(pl.LightningModule):
         if self.pretrain:
             # sum the embedding of object targeted and its receptacle
             if self.encode_images:
-                action_args_embeddings = self.object_embedding_layer(
-                    actions[:, 1:]
-                ).sum(1)
+                if self.object_name_embeddings:
+                    action_args_embeddings = self.object_name_embedding_layer(
+                        action_object_name_embeddings
+                    ).sum(1)
+                else:
+                    action_args_embeddings = self.object_embedding_layer(
+                        actions[:, 1:]
+                    ).sum(1)
             else:
                 action_args_embeddings = self.object_encoder.object_embedding_layer(
                     actions[:, 1:]
@@ -172,7 +185,16 @@ class Piglet(pl.LightningModule):
         bbox_scores = None
         if self.encode_images:
             # even if we only use images we still need an object_embedding layer to condition on the object names
-            conditional_vector = self.object_embedding_layer(objects[:, :, 0])
+
+            # case where we condition on the embedded object name (embedded using language model separately)
+            if self.object_name_embeddings:
+                conditional_vector = self.object_name_embedding_layer(
+                    object_name_embeddings
+                )
+            # otherwise use symbolic representation of the object
+            else:
+                conditional_vector = self.object_embedding_layer(objects[:, :, 0])
+
             h_o, bbox_scores = self.image_encoder(
                 images_hidden_states,
                 conditional_vector,
@@ -306,6 +328,10 @@ class Piglet(pl.LightningModule):
                 outputs[output_name] = torch.tensor(outputs[output_name])
             elif output_name == "image_bbox_scores":
                 outputs[output_name] = torch.stack(outputs[output_name])
+            elif output_name == "seen":
+                outputs[output_name] = repeat(
+                    torch.stack(outputs[output_name]), "b -> (b 2)"
+                )
             else:
                 # concat batches into tensors of shape (num_batches*num_objects, num_attributes)
                 outputs[output_name] = torch.concat(
@@ -320,6 +346,25 @@ class Piglet(pl.LightningModule):
             outputs["predictions"], outputs["objects_labels_post"], selection_mask
         )
         self.log(f"Accuracy/{split}_average_accuracy", average_accuracy, prog_bar=True)
+
+        if "seen" in outputs:
+            seen_selection = selection_mask & outputs["seen"]
+            average_accuracy = calculate_average_accuracy(
+                outputs["predictions"], outputs["objects_labels_post"], seen_selection
+            )
+            self.log(
+                f"Accuracy/{split}_seen_average_accuracy",
+                average_accuracy,
+            )
+
+            unseen_selection = selection_mask & (~outputs["seen"])
+            average_accuracy = calculate_average_accuracy(
+                outputs["predictions"], outputs["objects_labels_post"], unseen_selection
+            )
+            self.log(
+                f"Accuracy/{split}_unseen_average_accuracy",
+                average_accuracy,
+            )
 
         # log accuracy per attribute
         log_average_attribute_accuracy(

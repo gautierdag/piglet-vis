@@ -17,6 +17,7 @@ class Model:
     dropout: float
     fuse_images: bool
     no_symbolic: bool
+    object_name_embeddings: bool
 
 
 @dataclass

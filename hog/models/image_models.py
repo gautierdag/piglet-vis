@@ -78,7 +78,9 @@ class BoundingBoxImageModel(nn.Module):
 class PigletImageEncoder(nn.Module):
     def __init__(self, hidden_size=256, hidden_input_size=256):
         super().__init__()
+        # mapping from hidden_size to Image model hidden state
         self.conditional_fc = nn.Linear(hidden_size, hidden_input_size)
+
         # map to smaller dimensionality
         self.fc = nn.Linear(hidden_input_size, hidden_size)
 

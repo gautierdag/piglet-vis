@@ -51,7 +51,7 @@ def get_actions_mapper(data_dir_path: str) -> Dict[int, str]:
         return pickle.load(f)
 
 
-def get_objects_mapper(data_dir_path: str) -> Dict[int, str]:
+def get_objects_mapper(data_dir_path: str) -> Dict[int, Dict[int, str]]:
     """
     Return a dict mapping index to object name
     """
