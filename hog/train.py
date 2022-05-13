@@ -70,7 +70,7 @@ def train(
         images=cfg.images,
         annotations=annotations,
         num_workers=cfg.num_workers,
-        object_name_embeddings=cfg.model.object_name_embeddings,
+        label_name_embeddings=cfg.model.label_name_embeddings,
     )
 
     if best_model_path:
@@ -96,7 +96,7 @@ def train(
             learning_rate=cfg[job_type].learning_rate,
             pretrain=pretrain,
             no_symbolic=cfg.model.no_symbolic,
-            object_name_embeddings=cfg.model.object_name_embeddings,
+            label_name_embeddings=cfg.model.label_name_embeddings,
         )
 
     print("Creating Trainer")
@@ -115,7 +115,8 @@ def train(
         gpus=cfg.gpus,
         callbacks=[early_stopping_callback, checkpoint_callback],
         fast_dev_run=cfg.fast,
-        strategy=DDPStrategy(find_unused_parameters=cfg.model.no_symbolic),
+        # strategy=DDPStrategy(find_unused_parameters=cfg.model.no_symbolic),
+        strategy=DDPStrategy(find_unused_parameters=True),
     )
 
     print("Training...")

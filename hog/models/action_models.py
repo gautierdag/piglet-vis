@@ -1,4 +1,5 @@
 from collections import OrderedDict
+from typing import Union
 
 import torch
 import torch.nn as nn
@@ -31,11 +32,18 @@ class PigletSymbolicActionEncoder(nn.Module):
 
     def forward(
         self,
-        action: TensorType["batch_size", 1],
+        action: Union[
+            TensorType["batch_size", 1], TensorType["batch_size", "hidden_size"]
+        ],
         action_args_embeddings: TensorType["batch_size", "hidden_size"],
     ) -> TensorType["batch_size", "hidden_size"]:
+
         # embed the action vector
-        action_embedding = self.action_embedding_layer(action)
+        if action.shape[-1] == 1:
+            action_embedding = self.action_embedding_layer(action)
+        else:
+            action_embedding = action
+
         # combine with object representation of arguments
         h_a = self.action_encoder(action_embedding + action_args_embeddings)
         return h_a
@@ -69,6 +77,48 @@ class PigletAnnotatedActionEncoder(nn.Module):
         # pass first token (cls token) of each action to output layer
         h_a = self.output_layer(bert_outputs.last_hidden_state[:, 0, :])
         h_a = self.activation(h_a)
+        return h_a
+
+
+class PigletActionEncoder(nn.Module):
+    def __init__(
+        self,
+        pretrain=False,
+        hidden_size=256,
+        bert_model_name="roberta-base",
+        output_dir_path="output",
+        num_layers=3,
+        dropout=0.1,
+        action_embedding_size=10,
+    ):
+        super().__init__()
+        self.pretrain = pretrain
+        if pretrain:
+            self.action_encoder = PigletSymbolicActionEncoder(
+                hidden_size=hidden_size,
+                num_layers=num_layers,
+                dropout=dropout,
+                action_embedding_size=action_embedding_size,
+            )
+        else:
+            self.action_encoder = PigletAnnotatedActionEncoder(
+                hidden_size=hidden_size,
+                bert_model_name=bert_model_name,
+                output_dir_path=output_dir_path,
+            )
+
+    def forward(
+        self,
+        actions=None,
+        action_args_embeddings=None,
+        action_text=None,
+    ):
+        if self.pretrain:
+            h_a = self.action_encoder(actions, action_args_embeddings)
+        else:
+            h_a = self.action_encoder(
+                action_text["input_ids"], action_text["attention_mask"]
+            )
         return h_a
 
 

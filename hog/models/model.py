@@ -9,6 +9,7 @@ from torchtyping import TensorType
 
 from .action_models import (
     PigletActionApplyModel,
+    PigletActionEncoder,
     PigletAnnotatedActionEncoder,
     PigletSymbolicActionEncoder,
 )
@@ -48,7 +49,7 @@ class Piglet(pl.LightningModule):
         fuse_images=False,
         num_images_to_log=16,
         no_symbolic=False,
-        object_name_embeddings=False,
+        label_name_embeddings=False,
     ):
         """
         Args:
@@ -82,19 +83,21 @@ class Piglet(pl.LightningModule):
         self.image_hidden_input_size = image_hidden_input_size
         self.num_images_to_log = num_images_to_log
         self.no_symbolic = no_symbolic
-        self.object_name_embeddings = object_name_embeddings
+        self.label_name_embeddings = label_name_embeddings
 
         if fuse_images:
             assert encode_images, "encode_images must be True with fuse_images"
 
         # Image encoder
         if self.encode_images:
-            if self.object_name_embeddings:
-                self.object_name_embedding_layer = nn.Linear(768, hidden_size)
+            if self.label_name_embeddings:
+                self.label_name_embeddings_layer = nn.Linear(768, hidden_size)
             else:
+                # if we are not using the label embeddings then we need a separate embedding layer for the objects
                 self.object_embedding_layer = nn.Embedding(
                     object_embedding_size, hidden_size, padding_idx=none_object_index
                 )
+
             self.image_encoder = PigletImageEncoder(
                 hidden_input_size=image_hidden_input_size,
                 hidden_size=hidden_size,
@@ -112,19 +115,15 @@ class Piglet(pl.LightningModule):
             )
 
         # Action Encoder Model
-        if self.pretrain:
-            self.action_encoder = PigletSymbolicActionEncoder(
-                hidden_size=hidden_size,
-                num_layers=num_layers,
-                dropout=dropout,
-                action_embedding_size=action_embedding_size,
-            )
-        else:
-            self.action_encoder = PigletAnnotatedActionEncoder(
-                hidden_size=hidden_size,
-                bert_model_name=bert_model_name,
-                output_dir_path=output_dir_path,
-            )
+        self.action_encoder = PigletActionEncoder(
+            pretrain=pretrain,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            dropout=dropout,
+            action_embedding_size=action_embedding_size,
+            bert_model_name=bert_model_name,
+            output_dir_path=output_dir_path,
+        )
 
         # Action Apply Model
         self.apply_action = PigletActionApplyModel(
@@ -161,34 +160,35 @@ class Piglet(pl.LightningModule):
         # check that image inputs are not passed if no image encoder and vice versa
         assert (images_hidden_states is None) == (not self.encode_images)
 
-        if self.pretrain:
-            # sum the embedding of object targeted and its receptacle
-            if self.encode_images:
-                if self.object_name_embeddings:
-                    action_args_embeddings = self.object_name_embedding_layer(
-                        action_object_name_embeddings
-                    ).sum(1)
-                else:
-                    action_args_embeddings = self.object_embedding_layer(
-                        actions[:, 1:]
-                    ).sum(1)
+        # sum the embedding of object targeted and its receptacle
+        action_names = actions[:, 0]
+        if self.encode_images:
+            if self.label_name_embeddings:
+                action_args_embeddings = self.label_name_embeddings_layer(
+                    action_object_name_embeddings
+                )
+                action_names = action_args_embeddings[:, 0]
+                action_args_embeddings = action_args_embeddings[:, 1:].sum()
             else:
-                action_args_embeddings = self.object_encoder.object_embedding_layer(
+                action_args_embeddings = self.object_embedding_layer(
                     actions[:, 1:]
                 ).sum(1)
-            h_a = self.action_encoder(actions[:, 0], action_args_embeddings)
         else:
-            h_a = self.action_encoder(
-                action_text["input_ids"], action_text["attention_mask"]
-            )
+            action_args_embeddings = self.object_encoder.object_embedding_layer(
+                actions[:, 1:]
+            ).sum(1)
+
+        h_a = self.action_encoder(
+            action_names, action_args_embeddings, action_text=action_text
+        )
 
         bbox_scores = None
         if self.encode_images:
             # even if we only use images we still need an object_embedding layer to condition on the object names
 
             # case where we condition on the embedded object name (embedded using language model separately)
-            if self.object_name_embeddings:
-                conditional_vector = self.object_name_embedding_layer(
+            if self.label_name_embeddings:
+                conditional_vector = self.label_name_embeddings_layer(
                     object_name_embeddings
                 )
             # otherwise use symbolic representation of the object

@@ -18,11 +18,11 @@ from transformers import AutoModel, AutoTokenizer
 
 from config import HogConfig
 from models.image_models import BoundingBoxImageModel, get_image_feature_extractor
-from models.mappings import get_objects_mapper
+from models.mappings import get_actions_mapper, get_objects_mapper
 
 PigPenExample = Dict[str, Union[str, torch.Tensor]]
 
-# Channel-wise pixel statistics collected over entire dataset
+# Channel-wise pixel statistics collected over entire dataset (unused)
 # MEAN = torch.tensor([0.49458119, 0.43375753, 0.34601003])
 # STD = torch.tensor([0.19409628, 0.19771467, 0.19638838])
 
@@ -47,7 +47,7 @@ class PigPenDataset(Dataset):
         images=False,
         images_raw=False,
         annotations=False,
-        object_name_embeddings=False,
+        label_name_embeddings=False,
         randomise_annotations=False,
     ):
         """
@@ -63,7 +63,7 @@ class PigPenDataset(Dataset):
         self.h5py_file_path = f"{data_dir_path}/piglet.h5"
         self.h5py_dataset_path = f"{data_split}"
         self.annotations = annotations
-        self.object_name_embeddings = object_name_embeddings
+        self.label_name_embeddings = label_name_embeddings
 
         if self.annotations:
             data_dir_path += "/annotated"
@@ -88,7 +88,7 @@ class PigPenDataset(Dataset):
         if self.images_raw:
             assert len(self.action_matrix) == len(self.image_indices)
 
-        if self.images or self.object_name_embeddings:
+        if self.images or self.label_name_embeddings:
             assert os.path.exists(self.h5py_file_path), "h5py file does not exist"
             self.h5 = h5py.File(self.h5py_file_path, "r", libver="latest", swmr=True)
 
@@ -158,25 +158,28 @@ class PigPenDataset(Dataset):
                 annotation_index
             ]
 
-        if self.object_name_embeddings:
+        if self.label_name_embeddings:
             obj1_name = torch.from_numpy(
-                self.h5["label_embeddings"][objects_vector[0, 0]]
+                self.h5["object_name_label_embeddings"][objects_vector[0, 0]]
             )
             obj2_name = torch.from_numpy(
-                self.h5["label_embeddings"][objects_vector[1, 0]]
+                self.h5["object_name_label_embeddings"][objects_vector[1, 0]]
             )
             item["object_name_embeddings"] = torch.stack(
                 [obj1_name, obj2_name, obj1_name, obj2_name]
             )
 
+            action_name = torch.from_numpy(
+                self.h5["action_name_label_embeddings"][action_vector[0]]
+            )
             action_object_name = torch.from_numpy(
-                self.h5["label_embeddings"][action_vector[1]]
+                self.h5["object_name_label_embeddings"][action_vector[1]]
             )
             action_receptacle_name = torch.from_numpy(
-                self.h5["label_embeddings"][action_vector[2]]
+                self.h5["object_name_label_embeddings"][action_vector[2]]
             )
             item["action_object_name_embeddings"] = torch.stack(
-                [action_object_name, action_receptacle_name]
+                [action_name, action_object_name, action_receptacle_name]
             )
 
         item["indices"] = torch.tensor(index)
@@ -211,8 +214,8 @@ class PigPenDataset(Dataset):
         return images, bboxes
 
 
-def preprocess_object_name_embeddings(cfg: HogConfig, h5_file_path: str):
-    print("preprocessing object name embeddings")
+def preprocess_label_embeddings(cfg: HogConfig, h5_file_path: str):
+    print("Preprocessing object and action name embeddings")
 
     object_name_mapper = get_objects_mapper(cfg.paths.input_dir)[0]
     # split labels with Capital Letters into multiple words
@@ -220,6 +223,13 @@ def preprocess_object_name_embeddings(cfg: HogConfig, h5_file_path: str):
         k: re.sub(r"(\w)([A-Z])", r"\1 \2", v) for k, v in object_name_mapper.items()
     }
 
+    actions_name_mapper = get_actions_mapper(cfg.paths.input_dir)
+    actions_name_mapper = {
+        k: re.sub(r"(\w)([A-Z])", r"\1 \2", v).replace("Object", "").strip()
+        for k, v in actions_name_mapper.items()
+    }
+
+    #  load model and tokenizer
     bert_model_name = cfg.model.bert_model
     bert_model = AutoModel.from_pretrained(
         bert_model_name,
@@ -231,27 +241,45 @@ def preprocess_object_name_embeddings(cfg: HogConfig, h5_file_path: str):
         cache_dir=f"{cfg.paths.output_dir}/bert-models/{bert_model_name}",
         model_max_length=512,
     )
+    h5_file = h5py.File(h5_file_path, "a", libver="latest")
 
-    # tokenize all labels
-    label_names = list(object_name_mapper.values())
-    label_names_tokenized = tokenizer(
-        label_names, padding=True, return_tensors="pt", truncation=True
+    ###### Object labels ######
+    object_label_names = list(object_name_mapper.values())
+    object_label_names_tokenized = tokenizer(
+        object_label_names, padding=True, return_tensors="pt", truncation=True
     )
-
     # run BERT on all labels (done on cpu)
     with torch.no_grad():
-        output = bert_model(**label_names_tokenized)
+        output = bert_model(**object_label_names_tokenized)
         output = output.last_hidden_state[:, 0, :]
 
     # save embeddings to h5 file
-    h5_file = h5py.File(h5_file_path, "a", libver="latest")
-    label_embeddings = h5_file.create_dataset(
-        "label_embeddings",
-        shape=(len(label_names), bert_model.config.hidden_size),
+    object_name_label_embeddings = h5_file.create_dataset(
+        "object_name_label_embeddings",
+        shape=(len(object_label_names), bert_model.config.hidden_size),
         dtype=np.float32,
         fillvalue=0,
     )
-    label_embeddings[:] = output.numpy()
+    object_name_label_embeddings[:] = output.numpy()
+
+    ###### Action labels ######
+    action_label_names = list(actions_name_mapper.values())
+    action_label_names_tokenized = tokenizer(
+        action_label_names, padding=True, return_tensors="pt", truncation=True
+    )
+    # run BERT on all action labels (done on cpu)
+    with torch.no_grad():
+        output = bert_model(**action_label_names_tokenized)
+        output = output.last_hidden_state[:, 0, :]
+
+    # save embeddings to h5 file
+    action_name_label_embeddings = h5_file.create_dataset(
+        "action_name_label_embeddings",
+        shape=(len(action_label_names), bert_model.config.hidden_size),
+        dtype=np.float32,
+        fillvalue=0,
+    )
+    action_name_label_embeddings[:] = output.numpy()
 
     h5_file.close()
     del bert_model
@@ -266,6 +294,12 @@ def preprocess_images(cfg: HogConfig):
     """
     h5_file_path = f"{cfg.paths.input_dir}/piglet.h5"
     if os.path.exists(h5_file_path):
+        h5_file = h5py.File(h5_file_path, "r", libver="latest", swmr=True)
+        if "action_name_label_embeddings" not in h5_file:
+            h5_file.close()
+            preprocess_label_embeddings(cfg, h5_file_path)
+        else:
+            h5_file.close()
         return
     print("Preprocessing images")
 
@@ -377,7 +411,7 @@ def preprocess_images(cfg: HogConfig):
     del image_model
 
     # run preprocessing of object_names
-    preprocess_object_name_embeddings(cfg, h5_file_path)
+    preprocess_label_embeddings(cfg, h5_file_path)
 
 
 def collate_fn_generator(
@@ -442,7 +476,7 @@ class PigPenDataModule(pl.LightningDataModule):
         images=False,
         annotations=False,
         randomise_annotations=False,
-        object_name_embeddings=False,
+        label_name_embeddings=False,
         bert_model: str = "roberta-base",
         vision_model: str = "detr",
         num_workers=4,
@@ -454,7 +488,7 @@ class PigPenDataModule(pl.LightningDataModule):
         self.images = images
         self.annotations = annotations
         self.randomise_annotations = randomise_annotations
-        self.object_name_embeddings = object_name_embeddings
+        self.label_name_embeddings = label_name_embeddings
         self.bert_model = bert_model
         self.vision_model = vision_model
         self.num_workers = num_workers
@@ -470,7 +504,7 @@ class PigPenDataModule(pl.LightningDataModule):
             images=self.images,
             annotations=self.annotations,
             randomise_annotations=self.randomise_annotations,
-            object_name_embeddings=self.object_name_embeddings,
+            label_name_embeddings=self.label_name_embeddings,
         )
         self.pigpen_val = PigPenDataset(
             data_dir_path=self.data_dir_path,
@@ -478,7 +512,7 @@ class PigPenDataModule(pl.LightningDataModule):
             images=self.images,
             annotations=self.annotations,
             randomise_annotations=self.randomise_annotations,
-            object_name_embeddings=self.object_name_embeddings,
+            label_name_embeddings=self.label_name_embeddings,
         )
         self.collate_fn = None
         tokenizer = None
@@ -497,7 +531,7 @@ class PigPenDataModule(pl.LightningDataModule):
                 images=self.images,
                 annotations=self.annotations,
                 randomise_annotations=self.randomise_annotations,
-                object_name_embeddings=self.object_name_embeddings,
+                label_name_embeddings=self.label_name_embeddings,
             )
 
         # if using vision then we need the transform and load operation to apply to images
