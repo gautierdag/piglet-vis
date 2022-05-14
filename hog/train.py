@@ -115,8 +115,7 @@ def train(
         gpus=cfg.gpus,
         callbacks=[early_stopping_callback, checkpoint_callback],
         fast_dev_run=cfg.fast,
-        # strategy=DDPStrategy(find_unused_parameters=cfg.model.no_symbolic),
-        strategy=DDPStrategy(find_unused_parameters=True),
+        strategy=DDPStrategy(find_unused_parameters=cfg.model.no_symbolic),
     )
 
     print("Training...")

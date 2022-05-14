@@ -7,12 +7,7 @@ import torch.nn as nn
 from einops import repeat
 from torchtyping import TensorType
 
-from .action_models import (
-    PigletActionApplyModel,
-    PigletActionEncoder,
-    PigletAnnotatedActionEncoder,
-    PigletSymbolicActionEncoder,
-)
+from .action_models import PigletActionApplyModel, PigletActionEncoder
 from .analysis import (
     calculate_average_accuracy,
     calculate_diff_accuracy,
@@ -123,6 +118,7 @@ class Piglet(pl.LightningModule):
             action_embedding_size=action_embedding_size,
             bert_model_name=bert_model_name,
             output_dir_path=output_dir_path,
+            label_name_embeddings=label_name_embeddings,
         )
 
         # Action Apply Model
@@ -160,23 +156,27 @@ class Piglet(pl.LightningModule):
         # check that image inputs are not passed if no image encoder and vice versa
         assert (images_hidden_states is None) == (not self.encode_images)
 
-        # sum the embedding of object targeted and its receptacle
-        action_names = actions[:, 0]
-        if self.encode_images:
-            if self.label_name_embeddings:
-                action_args_embeddings = self.label_name_embeddings_layer(
-                    action_object_name_embeddings
-                )
-                action_names = action_args_embeddings[:, 0]
-                action_args_embeddings = action_args_embeddings[:, 1:].sum()
+        action_names = None
+        action_args_embeddings = None
+        if self.pretrain:
+            if self.encode_images:
+                if self.label_name_embeddings:
+                    action_args_embeddings = self.label_name_embeddings_layer(
+                        action_object_name_embeddings
+                    )
+                    action_names = action_args_embeddings[:, 0]
+                    # sum the embedding of object targeted and its receptacle
+                    action_args_embeddings = action_args_embeddings[:, 1:].sum()
+                else:
+                    action_names = actions[:, 0]
+                    action_args_embeddings = self.object_embedding_layer(
+                        actions[:, 1:]
+                    ).sum(1)
             else:
-                action_args_embeddings = self.object_embedding_layer(
+                action_names = actions[:, 0]
+                action_args_embeddings = self.object_encoder.object_embedding_layer(
                     actions[:, 1:]
                 ).sum(1)
-        else:
-            action_args_embeddings = self.object_encoder.object_embedding_layer(
-                actions[:, 1:]
-            ).sum(1)
 
         h_a = self.action_encoder(
             action_names, action_args_embeddings, action_text=action_text

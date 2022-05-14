@@ -15,14 +15,20 @@ class PigletSymbolicActionEncoder(nn.Module):
         num_layers=3,
         dropout=0.1,
         action_embedding_size=10,
+        label_name_embeddings=False,
     ):
         super().__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.dropout = dropout
+        self.label_name_embeddings = label_name_embeddings
 
         # Action Encoder Model
-        self.action_embedding_layer = nn.Embedding(action_embedding_size, hidden_size)
+        if not self.label_name_embeddings:
+            self.action_embedding_layer = nn.Embedding(
+                action_embedding_size, hidden_size
+            )
+
         action_encoder_layers = OrderedDict()
         for l in range(num_layers):
             action_encoder_layers[f"dropout_{l}"] = nn.Dropout(dropout)
@@ -38,14 +44,12 @@ class PigletSymbolicActionEncoder(nn.Module):
         action_args_embeddings: TensorType["batch_size", "hidden_size"],
     ) -> TensorType["batch_size", "hidden_size"]:
 
-        # embed the action vector
-        if action.shape[-1] == 1:
-            action_embedding = self.action_embedding_layer(action)
-        else:
-            action_embedding = action
+        # if we are using the true symbolic representation of the action
+        if not self.label_name_embeddings:
+            action = self.action_embedding_layer(action)
 
         # combine with object representation of arguments
-        h_a = self.action_encoder(action_embedding + action_args_embeddings)
+        h_a = self.action_encoder(action + action_args_embeddings)
         return h_a
 
 
@@ -90,6 +94,7 @@ class PigletActionEncoder(nn.Module):
         num_layers=3,
         dropout=0.1,
         action_embedding_size=10,
+        label_name_embeddings=False,
     ):
         super().__init__()
         self.pretrain = pretrain
@@ -99,6 +104,7 @@ class PigletActionEncoder(nn.Module):
                 num_layers=num_layers,
                 dropout=dropout,
                 action_embedding_size=action_embedding_size,
+                label_name_embeddings=label_name_embeddings,
             )
         else:
             self.action_encoder = PigletAnnotatedActionEncoder(
