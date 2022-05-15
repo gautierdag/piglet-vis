@@ -28,7 +28,7 @@
 #SBATCH -p ampere
 
 # Megabytes of RAM required. Check `cluster-status` for node configurations
-#SBATCH --mem=14000
+#SBATCH --mem=16000
 
 # Generic resources to use - typically you'll want gpu:n to get n gpus
 #SBATCH --gres=gpu:1
@@ -37,7 +37,7 @@
 #SBATCH --cpus-per-task=2
 
 # Maximum time for the job to run, format: days-hours:minutes:seconds
-#SBATCH --time=01:00:00
+#SBATCH --time=08:00:00
 
 # Location for stdout log - see https://slurm.schedmd.com/sbatch.html#lbAH
 #SBATCH --output="/home/%u/slurm_logs/%A.out"
