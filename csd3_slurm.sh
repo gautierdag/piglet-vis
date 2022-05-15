@@ -18,7 +18,7 @@
 # Options for sbatch
 # ====================
 
-#SBATCH -J piglet
+#SBATCH -J hog
 
 # Maximum number of nodes to use for the job
 #SBATCH --nodes=1
@@ -34,15 +34,15 @@
 #SBATCH --gres=gpu:1
 
 # Number of CPUs to use. Check `cluster-status` for node configurations
-#SBATCH --cpus-per-task=2
+#SBATCH --cpus-per-task=8
 
 # Maximum time for the job to run, format: days-hours:minutes:seconds
 #SBATCH --time=08:00:00
 
 # Location for stdout log - see https://slurm.schedmd.com/sbatch.html#lbAH
-#SBATCH --output="/home/%u/slurm_logs/%A.out"
+#SBATCH --output="/home/%u/slurm_logs/%A_%a.out"
 # Location for stderr log - see https://slurm.schedmd.com/sbatch.html#lbAH
-#SBATCH --error="/home/%u/slurm_logs/%A.err"
+#SBATCH --error="/home/%u/slurm_logs/%A_%a.err"
 
 
 # =====================
