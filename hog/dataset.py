@@ -236,6 +236,7 @@ def preprocess_label_embeddings(cfg: HogConfig, h5_file_path: str):
         cache_dir=f"{cfg.paths.output_dir}/bert-models/{bert_model_name}",
         add_pooling_layer=False,
     )
+    bert_model.eval()
     tokenizer = AutoTokenizer.from_pretrained(
         bert_model_name,
         cache_dir=f"{cfg.paths.output_dir}/bert-models/{bert_model_name}",

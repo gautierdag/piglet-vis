@@ -4,7 +4,7 @@ from typing import Dict, Tuple
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
-from einops import repeat
+from einops import reduce, repeat
 from torchtyping import TensorType
 
 from .action_models import PigletActionApplyModel, PigletActionEncoder
@@ -166,7 +166,9 @@ class Piglet(pl.LightningModule):
                     )
                     action_names = action_args_embeddings[:, 0]
                     # sum the embedding of object targeted and its receptacle
-                    action_args_embeddings = action_args_embeddings[:, 1:].sum()
+                    action_args_embeddings = reduce(
+                        action_args_embeddings[:, 1:, :], "b 2 d -> b d", "sum"
+                    )
                 else:
                     action_names = actions[:, 0]
                     action_args_embeddings = self.object_embedding_layer(
