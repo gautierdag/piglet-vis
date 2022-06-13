@@ -116,6 +116,7 @@ def train(
         callbacks=[early_stopping_callback, checkpoint_callback],
         fast_dev_run=cfg.fast,
         strategy=DDPStrategy(find_unused_parameters=cfg.model.no_symbolic),
+        log_every_n_steps=50 if pretrain else 1,
     )
 
     print("Training...")

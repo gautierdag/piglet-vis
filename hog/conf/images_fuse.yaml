@@ -27,7 +27,6 @@ model:
   num_heads: 4
   bert_model: "roberta-base"
   dropout: 0.1
-  fuse_images: true
   no_symbolic: false
   label_name_embeddings: false
   

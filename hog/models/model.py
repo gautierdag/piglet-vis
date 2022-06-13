@@ -41,7 +41,6 @@ class Piglet(pl.LightningModule):
         pretrain=True,
         bert_model_name="roberta-base",
         encode_images=False,
-        fuse_images=False,
         num_images_to_log=16,
         no_symbolic=False,
         label_name_embeddings=False,
@@ -74,14 +73,10 @@ class Piglet(pl.LightningModule):
         self.action_embedding_size = action_embedding_size
         self.pretrain = pretrain
         self.encode_images = encode_images
-        self.fuse_images = fuse_images
         self.image_hidden_input_size = image_hidden_input_size
         self.num_images_to_log = num_images_to_log
         self.no_symbolic = no_symbolic
         self.label_name_embeddings = label_name_embeddings
-
-        if fuse_images:
-            assert encode_images, "encode_images must be True with fuse_images"
 
         # Image encoder
         if self.encode_images:
@@ -214,7 +209,7 @@ class Piglet(pl.LightningModule):
         h_o_a = self.apply_action(h_o_pre, h_a)
 
         # fuse image representation of post image with pre image representation
-        if self.fuse_images:
+        if self.encode_images:
             h_o_pre += h_o[:, [2, 3], :]
 
         h_o_post_pred = self.object_decoder(h_o_a, h_o_pre)

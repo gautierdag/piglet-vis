@@ -15,7 +15,6 @@ class Model:
     num_heads: int
     bert_model: str
     dropout: float
-    fuse_images: bool
     no_symbolic: bool
     label_name_embeddings: bool
 

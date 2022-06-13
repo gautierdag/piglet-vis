@@ -3,7 +3,7 @@ defaults:
   - base_config 
   - _self_
 
-run_name: "images_embed_names"
+run_name: "images_embed_names_d0.25"
 gpus: "1"
 seed: 42
 fast: false
@@ -27,7 +27,6 @@ model:
   num_heads: 4
   bert_model: "roberta-base"
   dropout: 0.1
-  fuse_images: true
   no_symbolic: false
   label_name_embeddings: true
   
@@ -40,7 +39,7 @@ pretrain:
 nlu:
   batch_size: 64
   max_epochs: 80
-  learning_rate: 0.00001
+  learning_rate: 0.00002
   checkpoint_path: null
 
 
