@@ -3,11 +3,13 @@ defaults:
   - base_config 
   - _self_
 
-run_name: "images_embed_names"
+run_name: "base"
 gpus: "1"
 seed: 42
 fast: false
-images: true
+images: false
+symbolic: false
+label_name_embeddings: false
 num_workers: 6
 
 hydra:
@@ -27,9 +29,7 @@ model:
   num_heads: 4
   bert_model: "roberta-base"
   dropout: 0.1
-  no_symbolic: false
-  label_name_embeddings: true
-  
+
 pretrain:
   batch_size: 512
   max_epochs: 80

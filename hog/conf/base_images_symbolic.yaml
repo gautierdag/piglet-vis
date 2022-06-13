@@ -3,11 +3,11 @@ defaults:
   - base_config 
   - _self_
 
-run_name: "test"
+run_name: "base+images+symbolic"
 gpus: "1"
 seed: 42
 fast: false
-images: false
+images: true
 symbolic: true
 label_name_embeddings: false
 num_workers: 6
@@ -29,8 +29,7 @@ model:
   num_heads: 4
   bert_model: "roberta-base"
   dropout: 0.1
-  
-  
+
 pretrain:
   batch_size: 512
   max_epochs: 80

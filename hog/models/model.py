@@ -39,10 +39,10 @@ class Piglet(pl.LightningModule):
         data_dir_path="data",
         output_dir_path="output",
         pretrain=True,
+        num_images_to_log=16,
         bert_model_name="roberta-base",
         encode_images=False,
-        num_images_to_log=16,
-        no_symbolic=False,
+        encode_symbolic=False,
         label_name_embeddings=False,
     ):
         """
@@ -60,6 +60,8 @@ class Piglet(pl.LightningModule):
           pretrain: whether in pretraining mode (no language model)
           bert_model_name: name of the bert model to use (must have pretrain = False)
           encode_images: whether to encode images
+          encode_symbolic: whether to encode symbolic objects
+          label_name_embeddings: whether to use label name embeddings (instead of symbolic embeddings)
         """
         super().__init__()
         self.save_hyperparameters()
@@ -75,33 +77,33 @@ class Piglet(pl.LightningModule):
         self.encode_images = encode_images
         self.image_hidden_input_size = image_hidden_input_size
         self.num_images_to_log = num_images_to_log
-        self.no_symbolic = no_symbolic
+        self.encode_symbolic = encode_symbolic
         self.label_name_embeddings = label_name_embeddings
 
-        # Image encoder
-        if self.encode_images:
-            if self.label_name_embeddings:
-                self.label_name_embeddings_layer = nn.Linear(768, hidden_size)
-            else:
-                # if we are not using the label embeddings then we need a separate embedding layer for the objects
-                self.object_embedding_layer = nn.Embedding(
-                    object_embedding_size, hidden_size, padding_idx=none_object_index
-                )
+        # if we embed label names (using extracted bert embeddings)
+        if self.label_name_embeddings:
+            self.label_name_embeddings_layer = nn.Linear(768, hidden_size)
+        # if we are not using the label embeddings then we need a separate embedding layer for the objects
+        else:
+            self.object_embedding_layer = nn.Embedding(
+                object_embedding_size, hidden_size, padding_idx=none_object_index
+            )
 
+        # Image Object Encoder
+        if self.encode_images:
             self.image_encoder = PigletImageEncoder(
                 hidden_input_size=image_hidden_input_size,
                 hidden_size=hidden_size,
             )
-        else:
-            # Object Encoder Model
+
+        # Symbolic Object Encoder Model
+        if self.encode_symbolic:
             self.object_encoder = PigletObjectEncoder(
                 hidden_size=hidden_size,
                 num_layers=num_layers,
                 num_heads=num_heads,
                 dropout=dropout,
-                object_embedding_size=object_embedding_size,
                 num_attributes=num_attributes,
-                none_object_index=none_object_index,
             )
 
         # Action Encoder Model
@@ -154,24 +156,20 @@ class Piglet(pl.LightningModule):
         action_names = None
         action_args_embeddings = None
         if self.pretrain:
-            if self.encode_images:
-                if self.label_name_embeddings:
-                    action_args_embeddings = self.label_name_embeddings_layer(
-                        action_object_name_embeddings
-                    )
-                    action_names = action_args_embeddings[:, 0]
-                    # sum the embedding of object targeted and its receptacle
-                    action_args_embeddings = reduce(
-                        action_args_embeddings[:, 1:, :], "b 2 d -> b d", "sum"
-                    )
-                else:
-                    action_names = actions[:, 0]
-                    action_args_embeddings = self.object_embedding_layer(
-                        actions[:, 1:]
-                    ).sum(1)
+            # using the label embeddings as conditional embeddings
+            if self.label_name_embeddings:
+                action_args_embeddings = self.label_name_embeddings_layer(
+                    action_object_name_embeddings
+                )
+                action_names = action_args_embeddings[:, 0]
+                # sum the embedding of object targeted and its receptacle
+                action_args_embeddings = reduce(
+                    action_args_embeddings[:, 1:, :], "b 2 d -> b d", "sum"
+                )
+            # embed the action object names in symbolic embedding layer
             else:
                 action_names = actions[:, 0]
-                action_args_embeddings = self.object_encoder.object_embedding_layer(
+                action_args_embeddings = self.object_embedding_layer(
                     actions[:, 1:]
                 ).sum(1)
 
@@ -182,7 +180,6 @@ class Piglet(pl.LightningModule):
         bbox_scores = None
         if self.encode_images:
             # even if we only use images we still need an object_embedding layer to condition on the object names
-
             # case where we condition on the embedded object name (embedded using language model separately)
             if self.label_name_embeddings:
                 conditional_vector = self.label_name_embeddings_layer(
@@ -192,15 +189,25 @@ class Piglet(pl.LightningModule):
             else:
                 conditional_vector = self.object_embedding_layer(objects[:, :, 0])
 
-            h_o, bbox_scores = self.image_encoder(
+            h_o_imgs, bbox_scores = self.image_encoder(
                 images_hidden_states,
                 conditional_vector,
             )
-        elif self.no_symbolic:  # no symbolic object or images - just object names
-            h_o = self.object_encoder.object_embedding_layer(objects[:, :, 0])
-        else:
+
+        if self.encode_symbolic:
             # embed object vector
-            h_o = self.object_encoder(objects)
+            object_embeddings = self.object_embedding_layer(objects)
+            h_o_sym = self.object_encoder(object_embeddings)
+
+        if not self.encode_images and not self.encode_symbolic:
+            # no symbolic object or images - just object names
+            h_o = self.object_embedding_layer(objects[:, :, 0])
+        elif self.encode_images and not self.encode_symbolic:
+            h_o = h_o_imgs
+        elif not self.encode_images and self.encode_symbolic:
+            h_o = h_o_sym
+        else:
+            h_o = h_o_imgs + h_o_sym
 
         # select only the pre action objects
         h_o_pre = h_o[:, [0, 1], :]
@@ -208,9 +215,9 @@ class Piglet(pl.LightningModule):
         # apply action to object hidden representations
         h_o_a = self.apply_action(h_o_pre, h_a)
 
-        # fuse image representation of post image with pre image representation
+        # fuse image representation of post image with pre-action object representation
         if self.encode_images:
-            h_o_pre += h_o[:, [2, 3], :]
+            h_o_pre += h_o_imgs[:, [2, 3], :]
 
         h_o_post_pred = self.object_decoder(h_o_a, h_o_pre)
 

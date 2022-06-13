@@ -14,23 +14,15 @@ class PigletObjectEncoder(nn.Module):
         num_layers=3,
         num_heads=4,
         dropout=0.1,
-        object_embedding_size=329,
         num_attributes=38,
-        none_object_index=102,
     ):
         super().__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.num_heads = num_heads
         self.dropout = dropout
-        self.object_embedding_size = object_embedding_size
         self.num_attributes = num_attributes
-        self.none_object_index = none_object_index  # mask object tensor with zeroes if object = none_object_index
 
-        # Object Encoder Model
-        self.object_embedding_layer = nn.Embedding(
-            object_embedding_size, hidden_size, padding_idx=none_object_index
-        )
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=hidden_size, nhead=num_heads, dropout=dropout, batch_first=True
         )
@@ -40,14 +32,13 @@ class PigletObjectEncoder(nn.Module):
         self.activation = nn.ReLU()
 
     def forward(
-        self, object_inputs: TensorType["batch_size", "num_objects", "num_attributes"]
+        self,
+        object_embeddings: TensorType[
+            "batch_size", "num_objects", "num_attributes", "hidden_size"
+        ],
     ) -> TensorType["batch_size", "num_objects", "hidden_size"]:
-        # consitent number of object attributes
-        assert object_inputs.shape[2] == self.num_attributes
-        num_objects = object_inputs.shape[1]
-
-        # embed object vector
-        object_embeddings = self.object_embedding_layer(object_inputs)
+        assert self.num_attributes == object_embeddings.shape[2]
+        num_objects = object_embeddings.shape[1]
 
         # reshape object_embeddings to [batch_size*2, num_attributes, hidden_size]
         object_embeddings = rearrange(

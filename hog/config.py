@@ -15,8 +15,6 @@ class Model:
     num_heads: int
     bert_model: str
     dropout: float
-    no_symbolic: bool
-    label_name_embeddings: bool
 
 
 @dataclass
@@ -33,7 +31,11 @@ class HogConfig:
     seed: int
     gpus: str  # use "1" to use only one gpu
     fast: bool  # whether to run fast dev run
+
     images: bool  # whether to use images
+    symbolic: bool  # whether to use symbolic inputs
+    label_name_embeddings: bool  # whether to use label name embeddings (instead of symbolic inputs)
+
     num_workers: int  # number of workers for dataloader
     paths: Paths  # input and output directories
     model: Model  # model parameters constant for both pretrain and nlu
