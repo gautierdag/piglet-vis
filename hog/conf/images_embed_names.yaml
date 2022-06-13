@@ -3,7 +3,7 @@ defaults:
   - base_config 
   - _self_
 
-run_name: "images_embed_names_d0.25"
+run_name: "images_embed_names"
 gpus: "1"
 seed: 42
 fast: false
@@ -39,7 +39,7 @@ pretrain:
 nlu:
   batch_size: 64
   max_epochs: 80
-  learning_rate: 0.00002
+  learning_rate: 0.00001
   checkpoint_path: null
 
 

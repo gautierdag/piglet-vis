@@ -92,7 +92,6 @@ def train(
             num_heads=cfg.model.num_heads,
             dropout=cfg.model.dropout,
             encode_images=cfg.images,
-            fuse_images=cfg.model.fuse_images,
             learning_rate=cfg[job_type].learning_rate,
             pretrain=pretrain,
             no_symbolic=cfg.model.no_symbolic,
@@ -116,7 +115,6 @@ def train(
         callbacks=[early_stopping_callback, checkpoint_callback],
         fast_dev_run=cfg.fast,
         strategy=DDPStrategy(find_unused_parameters=cfg.model.no_symbolic),
-        log_every_n_steps=50 if pretrain else 1,
     )
 
     print("Training...")
