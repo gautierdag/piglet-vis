@@ -221,9 +221,9 @@ class Piglet(pl.LightningModule):
 
         # fuse image representation of post image with pre-action object representation
         if self.encode_images:
-            h_o_pre += h_o_imgs[:, [2, 3], :]
-
-        h_o_post_pred = self.object_decoder(h_o_a, h_o_pre)
+            h_o_post_pred = self.object_decoder(h_o_a, h_o_pre+h_o_imgs[:, [2, 3], :])
+        else:
+            h_o_post_pred = self.object_decoder(h_o_a, h_o_pre)
 
         return h_o_post_pred, h_o_pre_pred, bbox_scores
 
