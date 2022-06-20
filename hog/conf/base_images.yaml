@@ -3,7 +3,7 @@ defaults:
   - base_config 
   - _self_
 
-run_name: "base+images_pre-pre-pred"
+run_name: "base+images"
 gpus: "1"
 seed: 42
 fast: false
