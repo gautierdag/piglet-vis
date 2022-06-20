@@ -215,14 +215,15 @@ class Piglet(pl.LightningModule):
         # apply action to object hidden representations
         h_o_a = self.apply_action(h_o_pre, h_a)
 
+        # reconstruct pre-action attributes from h_o_pre
+        h_o_a_init = torch.zeros_like(h_o_a)
+        h_o_pre_pred = self.object_decoder(h_o_a_init, h_o_pre)
+
         # fuse image representation of post image with pre-action object representation
         if self.encode_images:
             h_o_pre += h_o_imgs[:, [2, 3], :]
 
         h_o_post_pred = self.object_decoder(h_o_a, h_o_pre)
-
-        h_o_a_init = torch.zeros_like(h_o_a)
-        h_o_pre_pred = self.object_decoder(h_o_a_init, h_o_pre)
 
         return h_o_post_pred, h_o_pre_pred, bbox_scores
 
