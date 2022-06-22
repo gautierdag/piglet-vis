@@ -37,8 +37,7 @@ graph TD;
 graph TD;
     B{Action Encoder} --> D{Action Apply};
     A{Image Model} --> D{Action Apply};
-    A --> G[Symbolic Object Representation Pre-Action]:::inputclass
-    G[Symbolic Object Representations]:::inputclass -.loss.-> A
+    A --> I[Symbolic Object Representation Pre-Action]:::inputclass
     F[Symbolic Action Representation]:::inputclass --> B
     K[Image Before Action]:::inputclass --> A
     L[Image After Action]:::inputclass --> A
@@ -54,8 +53,6 @@ graph TD;
 graph TD;
     B{Action LM Encoder} --> D{Action Apply};
     A{Image Model} --> D{Action Apply};
-    A --> G[Symbolic Object Representation Pre-Action]:::inputclass
-    G[Symbolic Object Representations]:::inputclass -.loss.-> A
     F[Action Text]:::inputclass --> B
     K[Image Before Action]:::inputclass --> A
     L[Image After Action]:::inputclass --> A

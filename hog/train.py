@@ -53,8 +53,8 @@ def train(
 
     wandb_logger = WandbLogger(
         name=run_name,
-        project="hog",
-        entity="itl",
+        project=cfg.wandb_project,
+        entity=cfg.wandb_entity,
         job_type=job_type,
         config=cfg,
         save_dir=f"{cfg.paths.output_dir}",

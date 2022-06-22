@@ -3,13 +3,15 @@ defaults:
   - base_config 
   - _self_
 
-run_name: "base+images+symbolic"
+run_name: "base+images+text-labels"
+wandb_project: "hog"
+wandb_entity: "itl"
 gpus: "1"
 seed: 42
 fast: false
 images: true
-symbolic: true
-label_name_embeddings: false
+symbolic: false
+label_name_embeddings: true
 num_workers: 6
 
 hydra:
@@ -29,7 +31,7 @@ model:
   num_heads: 4
   bert_model: "roberta-base"
   dropout: 0.1
-
+  
 pretrain:
   batch_size: 512
   max_epochs: 80

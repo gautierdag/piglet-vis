@@ -4,6 +4,8 @@ defaults:
   - _self_
 
 run_name: "base+symbolic"
+wandb_project: "hog"
+wandb_entity: "itl"
 gpus: "1"
 seed: 42
 fast: false

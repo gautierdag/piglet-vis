@@ -11,3 +11,7 @@ transformers
 einops
 h5py
 matplotlib
+hydra
+tqdm
+h5py
+torchtyping

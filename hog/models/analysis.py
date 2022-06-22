@@ -76,35 +76,6 @@ def plot_effect_grid(images, bboxes, scores, objects) -> Image.Image:
 
     return Image.fromarray(image_from_plot)
 
-
-# def generate_wandb_bounding_boxes(
-#     bboxes: TensorType["N", "box"], scores: TensorType["obj", "N"]
-# ) -> dict:
-#     """
-#     Format the bboxes and scores for wandb logger
-#     """
-#     image_before_boxes = {"predictions": {"box_data": []}}
-#     for i, (x_min, y_min, x_max, y_max) in enumerate(bboxes):
-#         obj1_score = scores[0][i]
-#         obj2_score = scores[1][i]
-#         box = {
-#             "position": {
-#                 "minX": x_min.item(),
-#                 "maxX": x_max.item(),
-#                 "minY": y_min.item(),
-#                 "maxY": y_max.item(),
-#             },
-#             "domain": "pixel",
-#             "class_id": i,
-#             "scores": {
-#                 "obj_1_score": obj1_score.item(),
-#                 "obj_2_score": obj2_score.item(),
-#             },
-#         }
-#         image_before_boxes["predictions"]["box_data"].append(box)
-#     return image_before_boxes
-
-
 def get_example_title_from_actions_object(
     actions, objects, index: int, action_idx_to_name: dict, object_idx_to_name: dict
 ) -> str:
