@@ -76,6 +76,7 @@ def plot_effect_grid(images, bboxes, scores, objects) -> Image.Image:
 
     return Image.fromarray(image_from_plot)
 
+
 def get_example_title_from_actions_object(
     actions, objects, index: int, action_idx_to_name: dict, object_idx_to_name: dict
 ) -> str:
@@ -220,6 +221,13 @@ def log_confusion_matrices(
 
         min_idx = list(object_mapper[idx].keys())[0]
         class_names = list(object_mapper[idx].values())
+        print(f"object_attribute_name: {object_attribute_name}")
+        print(f"idx: {idx}")
+        print(f"min_idx: {min_idx}")
+        print(f"class_names: {class_names}")
+        print(f"preds: {preds[:, idx].numpy()}")
+        print(f"y_true: {labels[:, idx].numpy()}")
+
         confusion_matrix = wandb.plot.confusion_matrix(
             title=f"Confusion Matrix for {object_attribute_name}",
             preds=preds[:, idx].numpy() - min_idx,
