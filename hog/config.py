@@ -15,6 +15,10 @@ class Model:
     num_heads: int
     bert_model: str
     dropout: float
+    action_embedding_size: int = 10
+    object_embedding_size: int = 329
+    none_object_index: int = 102
+    num_attributes: int = 38
 
 
 @dataclass
@@ -41,3 +45,5 @@ class HogConfig:
     model: Model  # model parameters constant for both pretrain and nlu
     pretrain: Train  # Settings specific to pretraining
     nlu: Train  # Settings specific to NLU finetuning task
+
+    use_full: bool = False  # whether to use full original dataset (unfiltered)

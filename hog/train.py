@@ -71,6 +71,7 @@ def train(
         annotations=annotations,
         num_workers=cfg.num_workers,
         label_name_embeddings=cfg.label_name_embeddings,
+        use_full=cfg.use_full,
     )
 
     if best_model_path:
@@ -96,6 +97,10 @@ def train(
             encode_images=cfg.images,
             encode_symbolic=cfg.symbolic,
             label_name_embeddings=cfg.label_name_embeddings,
+            action_embedding_size=cfg.model.action_embedding_size,
+            object_embedding_size=cfg.model.object_embedding_size,
+            none_object_index=cfg.model.none_object_index,
+            num_attributes=cfg.model.num_attributes,
         )
 
     print("Creating Trainer")

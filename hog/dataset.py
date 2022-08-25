@@ -49,6 +49,7 @@ class PigPenDataset(Dataset):
         annotations=False,
         label_name_embeddings=False,
         randomise_annotations=False,
+        use_full=False,
     ):
         """
         Args:
@@ -64,26 +65,29 @@ class PigPenDataset(Dataset):
         self.h5py_dataset_path = f"{data_split}"
         self.annotations = annotations
         self.label_name_embeddings = label_name_embeddings
+        full = ""
+        if use_full:
+            full = "_full"
 
         if self.annotations:
             data_dir_path += "/annotated"
 
         self.image_directory = f"{data_dir_path}/{data_split}"
         self.images_raw = images_raw
-        image_indices_file = f"{data_dir_path}/img_indices_{data_split}.npy"
+        image_indices_file = f"{data_dir_path}/img_indices_{data_split}{full}.npy"
         self.image_indices = np.load(image_indices_file)
 
         self.randomise_annotations = randomise_annotations
 
-        self.action_matrix = np.load(f"{data_dir_path}/actions_{data_split}.npy")
+        self.action_matrix = np.load(f"{data_dir_path}/actions_{data_split}{full}.npy")
 
         # seen matrix controls what objects to show during training/validation
-        self.seen_matrix = np.load(f"{data_dir_path}/seen_{data_split}.npy")
+        self.seen_matrix = np.load(f"{data_dir_path}/seen_{data_split}{full}.npy")
         if self.data_split != "test":
             # if not test then we only select indices where True
             self.seen_matrix = np.where(self.seen_matrix)[0]
 
-        self.objects_matrix = np.load(f"{data_dir_path}/objects_{data_split}.npy")
+        self.objects_matrix = np.load(f"{data_dir_path}/objects_{data_split}{full}.npy")
         assert len(self.action_matrix) == len(self.objects_matrix)
         if self.images_raw:
             assert len(self.action_matrix) == len(self.image_indices)
@@ -95,14 +99,15 @@ class PigPenDataset(Dataset):
         if self.annotations:
             self.h5py_dataset_path += "/annotated"
             self.precondition_text = np.load(
-                f"{data_dir_path}/precondition_language_{data_split}.npy",
+                f"{data_dir_path}/precondition_language_{data_split}{full}.npy",
                 allow_pickle=True,
             )
             self.action_text = np.load(
-                f"{data_dir_path}/action_language_{data_split}.npy", allow_pickle=True
+                f"{data_dir_path}/action_language_{data_split}{full}.npy",
+                allow_pickle=True,
             )
             self.postcondition_text = np.load(
-                f"{data_dir_path}/postcondition_language_{data_split}.npy",
+                f"{data_dir_path}/postcondition_language_{data_split}{full}.npy",
                 allow_pickle=True,
             )
 
@@ -294,6 +299,9 @@ def preprocess_images(cfg: HogConfig):
     If h5 file already exists then it is loaded and the preprocessing is skipped
     """
     h5_file_path = f"{cfg.paths.input_dir}/piglet.h5"
+    if cfg.use_full:
+        h5_file_path = f"{cfg.paths.input_dir}/piglet_full.h5"
+
     if os.path.exists(h5_file_path):
         h5_file = h5py.File(h5_file_path, "r", libver="latest", swmr=True)
         if "action_name_label_embeddings" not in h5_file:
@@ -339,7 +347,10 @@ def preprocess_images(cfg: HogConfig):
 
             print(f"Extracting images for {base_path}")
             dataset = PigPenDataset(
-                data_dir_path=path, images_raw=True, data_split=split
+                data_dir_path=path,
+                images_raw=True,
+                data_split=split,
+                use_full=cfg.use_full,
             )
             batch_size = 32
             loader = DataLoader(
@@ -481,6 +492,7 @@ class PigPenDataModule(pl.LightningDataModule):
         bert_model: str = "roberta-base",
         vision_model: str = "detr",
         num_workers=4,
+        use_full: bool = False,
     ):
         super().__init__()
         self.data_dir_path = data_dir_path
@@ -493,6 +505,7 @@ class PigPenDataModule(pl.LightningDataModule):
         self.bert_model = bert_model
         self.vision_model = vision_model
         self.num_workers = num_workers
+        self.use_full = use_full
 
     def setup(self, stage: Optional[str] = None):
         """
@@ -506,6 +519,7 @@ class PigPenDataModule(pl.LightningDataModule):
             annotations=self.annotations,
             randomise_annotations=self.randomise_annotations,
             label_name_embeddings=self.label_name_embeddings,
+            use_full=self.use_full,
         )
         self.pigpen_val = PigPenDataset(
             data_dir_path=self.data_dir_path,
@@ -514,6 +528,7 @@ class PigPenDataModule(pl.LightningDataModule):
             annotations=self.annotations,
             randomise_annotations=self.randomise_annotations,
             label_name_embeddings=self.label_name_embeddings,
+            use_full=self.use_full,
         )
         self.collate_fn = None
         tokenizer = None
@@ -533,6 +548,7 @@ class PigPenDataModule(pl.LightningDataModule):
                 annotations=self.annotations,
                 randomise_annotations=self.randomise_annotations,
                 label_name_embeddings=self.label_name_embeddings,
+                use_full=self.use_full,
             )
 
         # if using vision then we need the transform and load operation to apply to images
