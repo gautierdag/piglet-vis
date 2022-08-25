@@ -65,8 +65,10 @@ class PigPenDataset(Dataset):
         self.h5py_dataset_path = f"{data_split}"
         self.annotations = annotations
         self.label_name_embeddings = label_name_embeddings
+        self.use_full = use_full
+
         full = ""
-        if use_full:
+        if self.use_full:
             full = "_full"
 
         if self.annotations:
@@ -82,10 +84,14 @@ class PigPenDataset(Dataset):
         self.action_matrix = np.load(f"{data_dir_path}/actions_{data_split}{full}.npy")
 
         # seen matrix controls what objects to show during training/validation
-        self.seen_matrix = np.load(f"{data_dir_path}/seen_{data_split}{full}.npy")
-        if self.data_split != "test":
-            # if not test then we only select indices where True
-            self.seen_matrix = np.where(self.seen_matrix)[0]
+        # NOTE if use_full then we don't filter unseen/seen in pretraining - so not accurate zero shot
+        if self.use_full and not self.annotations:
+            self.seen_matrix = np.arange(self.action_matrix.shape[0])
+        else:
+            self.seen_matrix = np.load(f"{data_dir_path}/seen_{data_split}.npy")
+            if self.data_split != "test":
+                # if not test then we only select indices where True
+                self.seen_matrix = np.where(self.seen_matrix)[0]
 
         self.objects_matrix = np.load(f"{data_dir_path}/objects_{data_split}{full}.npy")
         assert len(self.action_matrix) == len(self.objects_matrix)
