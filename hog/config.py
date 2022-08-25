@@ -31,7 +31,8 @@ class Train:
 
 @dataclass
 class HogConfig:
-    wandb_project = "hog"
+    wandb_project: str
+    wandb_entity: str
 
     run_name: str
     seed: int
