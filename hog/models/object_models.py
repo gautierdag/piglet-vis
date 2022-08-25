@@ -99,7 +99,7 @@ class PigletObjectDecoder(nn.Module):
                 for index, _ in index_mapper.items()
             ]
         )
-        mask_embedding_layer = torch.zeros((38, 329))
+        mask_embedding_layer = torch.zeros((38, object_embedding_size))
         mask_embedding_layer[indexes[:, 0], indexes[:, 1]] = 1
         self.register_buffer("mask_embedding_layer", mask_embedding_layer)
 
