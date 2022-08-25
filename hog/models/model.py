@@ -44,6 +44,7 @@ class Piglet(pl.LightningModule):
         encode_images=False,
         encode_symbolic=False,
         label_name_embeddings=False,
+        use_full=False,
     ):
         """
         Args:
@@ -62,6 +63,7 @@ class Piglet(pl.LightningModule):
           encode_images: whether to encode images
           encode_symbolic: whether to encode symbolic objects
           label_name_embeddings: whether to use label name embeddings (instead of symbolic embeddings)
+          use_full: whether to use full version of dataset
         """
         super().__init__()
         self.save_hyperparameters()
@@ -135,10 +137,13 @@ class Piglet(pl.LightningModule):
             num_attributes=num_attributes,
             none_object_index=none_object_index,
             data_dir_path=data_dir_path,
+            use_full=use_full,
         )
 
-        self.action_idx_to_name = get_actions_mapper(data_dir_path)
-        self.object_attributes_idx_to_mapper = get_objects_mapper(data_dir_path)
+        self.action_idx_to_name = get_actions_mapper(data_dir_path, use_full=use_full)
+        self.object_attributes_idx_to_mapper = get_objects_mapper(
+            data_dir_path, use_full=use_full
+        )
 
     def forward(
         self,

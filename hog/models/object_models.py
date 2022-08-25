@@ -6,6 +6,8 @@ from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
 from torchtyping import TensorType
 
+from .mappings import get_objects_mapper
+
 
 class PigletObjectEncoder(nn.Module):
     def __init__(
@@ -75,6 +77,7 @@ class PigletObjectDecoder(nn.Module):
         object_embedding_size=329,
         num_attributes=38,
         none_object_index=102,
+        use_full=False,
         data_dir_path="data",
     ):
         super().__init__()
@@ -89,7 +92,9 @@ class PigletObjectDecoder(nn.Module):
         # mask for embedding layer output -> based on position
         # mask probability to 0 for other attributes when looking at a specific attribute
         # This is needed because we are using a single embedding layer for all object attributes
-        reverse_object_mapper_path = f"{data_dir_path}/reverse_object_mapping.pkl"
+        reverse_object_mapper_path = get_objects_mapper(
+            data_dir_path, use_full=use_full
+        )
         with open(reverse_object_mapper_path, "rb") as f:
             self.reverse_object_mapper = pickle.load(f)
         indexes = torch.tensor(
