@@ -31,6 +31,8 @@ class Train:
 
 @dataclass
 class HogConfig:
+    wandb_project = "hog"
+
     run_name: str
     seed: int
     gpus: str  # use "1" to use only one gpu
