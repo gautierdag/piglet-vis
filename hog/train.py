@@ -85,6 +85,7 @@ def train(
         )
     else:
         print("Creating Model")
+        print(f"cfg.model.object_embedding_size {cfg.model.object_embedding_size}")
         model = Piglet(
             data_dir_path=cfg.paths.input_dir,
             output_dir_path=f"{cfg.paths.output_dir}",
@@ -101,6 +102,7 @@ def train(
             object_embedding_size=cfg.model.object_embedding_size,
             none_object_index=cfg.model.none_object_index,
             num_attributes=cfg.model.num_attributes,
+            use_full=cfg.use_full,
         )
 
     print("Creating Trainer")
