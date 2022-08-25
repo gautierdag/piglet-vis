@@ -1,1 +1,15 @@
-python hog/main.py --config-name base_images ++model.hidden_size=64 ++model.num_layers=3 ++pretrain.batch_size=256 ++seed=10
+python hog/main.py --config-name base_images_full ++model.hidden_size=64 ++model.num_layers=3 ++pretrain.batch_size=256 ++seed=1
+python hog/main.py --config-name base_symbolic_full ++model.hidden_size=64 ++model.num_layers=3 ++pretrain.batch_size=256 ++seed=1
+python hog/main.py --config-name base_images_text_labels_full ++model.hidden_size=64 ++model.num_layers=3 ++pretrain.batch_size=256 ++seed=1
+python hog/main.py --config-name base_images_full ++model.hidden_size=64 ++model.num_layers=3 ++pretrain.batch_size=256 ++seed=2
+python hog/main.py --config-name base_symbolic_full ++model.hidden_size=64 ++model.num_layers=3 ++pretrain.batch_size=256 ++seed=2
+python hog/main.py --config-name base_images_text_labels_full ++model.hidden_size=64 ++model.num_layers=3 ++pretrain.batch_size=256 ++seed=2
+python hog/main.py --config-name base_images_full ++model.hidden_size=64 ++model.num_layers=3 ++pretrain.batch_size=256 ++seed=3
+python hog/main.py --config-name base_symbolic_full ++model.hidden_size=64 ++model.num_layers=3 ++pretrain.batch_size=256 ++seed=3
+python hog/main.py --config-name base_images_text_labels_full ++model.hidden_size=64 ++model.num_layers=3 ++pretrain.batch_size=256 ++seed=3
+python hog/main.py --config-name base_images_full ++model.hidden_size=64 ++model.num_layers=3 ++pretrain.batch_size=256 ++seed=4
+python hog/main.py --config-name base_symbolic_full ++model.hidden_size=64 ++model.num_layers=3 ++pretrain.batch_size=256 ++seed=4
+python hog/main.py --config-name base_images_text_labels_full ++model.hidden_size=64 ++model.num_layers=3 ++pretrain.batch_size=256 ++seed=4
+python hog/main.py --config-name base_images_full ++model.hidden_size=64 ++model.num_layers=3 ++pretrain.batch_size=256 ++seed=5
+python hog/main.py --config-name base_symbolic_full ++model.hidden_size=64 ++model.num_layers=3 ++pretrain.batch_size=256 ++seed=5
+python hog/main.py --config-name base_images_text_labels_full ++model.hidden_size=64 ++model.num_layers=3 ++pretrain.batch_size=256 ++seed=5
