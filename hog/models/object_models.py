@@ -92,11 +92,9 @@ class PigletObjectDecoder(nn.Module):
         # mask for embedding layer output -> based on position
         # mask probability to 0 for other attributes when looking at a specific attribute
         # This is needed because we are using a single embedding layer for all object attributes
-        reverse_object_mapper_path = get_objects_mapper(
+        self.reverse_object_mapper = get_objects_mapper(
             data_dir_path, use_full=use_full
         )
-        with open(reverse_object_mapper_path, "rb") as f:
-            self.reverse_object_mapper = pickle.load(f)
         indexes = torch.tensor(
             [
                 (pos, index)
