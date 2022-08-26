@@ -99,7 +99,9 @@ class PigPenDataset(Dataset):
             assert len(self.action_matrix) == len(self.image_indices)
 
         if self.images or self.label_name_embeddings:
-            assert os.path.exists(self.h5py_file_path), "h5py file does not exist"
+            assert os.path.exists(
+                self.h5py_file_path
+            ), "h5py file does not exist at {self.h5py_file_path}"
             self.h5 = h5py.File(self.h5py_file_path, "r", libver="latest", swmr=True)
 
         if self.annotations:
