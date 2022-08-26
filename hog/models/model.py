@@ -81,6 +81,7 @@ class Piglet(pl.LightningModule):
         self.num_images_to_log = num_images_to_log
         self.encode_symbolic = encode_symbolic
         self.label_name_embeddings = label_name_embeddings
+        self.use_full = use_full
 
         # if we embed label names (using extracted bert embeddings)
         if self.label_name_embeddings:
