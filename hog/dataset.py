@@ -232,13 +232,15 @@ class PigPenDataset(Dataset):
 def preprocess_label_embeddings(cfg: HogConfig, h5_file_path: str):
     print("Preprocessing object and action name embeddings")
 
-    object_name_mapper = get_objects_mapper(cfg.paths.input_dir)[0]
+    object_name_mapper = get_objects_mapper(cfg.paths.input_dir, use_full=cfg.use_full)[
+        0
+    ]
     # split labels with Capital Letters into multiple words
     object_name_mapper = {
         k: re.sub(r"(\w)([A-Z])", r"\1 \2", v) for k, v in object_name_mapper.items()
     }
 
-    actions_name_mapper = get_actions_mapper(cfg.paths.input_dir)
+    actions_name_mapper = get_actions_mapper(cfg.paths.input_dir, use_full=cfg.use_full)
     actions_name_mapper = {
         k: re.sub(r"(\w)([A-Z])", r"\1 \2", v).replace("Object", "").strip()
         for k, v in actions_name_mapper.items()
