@@ -357,7 +357,7 @@ class Piglet(pl.LightningModule):
         )
         self.log(f"Accuracy/{split}_average_accuracy", average_accuracy, prog_bar=True)
 
-        if "seen" in outputs:
+        if "seen" in outputs and not self.use_full:
             seen_selection = selection_mask & outputs["seen"]
             average_accuracy = calculate_average_accuracy(
                 outputs["predictions"], outputs["objects_labels_post"], seen_selection

@@ -59,17 +59,17 @@ class PigPenDataset(Dataset):
             annotations: if True, return the annotations as well as the action/object vectors
             randomise_annotations: if True, randomly select one of the three annotations
         """
-        self.data_split = data_split
-        self.images = images
-        self.h5py_file_path = f"{data_dir_path}/piglet.h5"
-        self.h5py_dataset_path = f"{data_split}"
-        self.annotations = annotations
-        self.label_name_embeddings = label_name_embeddings
         self.use_full = use_full
-
         full = ""
         if self.use_full:
             full = "_full"
+
+        self.data_split = data_split
+        self.images = images
+        self.h5py_file_path = f"{data_dir_path}/piglet{full}.h5"
+        self.h5py_dataset_path = f"{data_split}"
+        self.annotations = annotations
+        self.label_name_embeddings = label_name_embeddings
 
         if self.annotations:
             data_dir_path += "/annotated"
@@ -85,7 +85,7 @@ class PigPenDataset(Dataset):
 
         # seen matrix controls what objects to show during training/validation
         # NOTE if use_full then we don't filter unseen/seen in pretraining - so not accurate zero shot
-        if self.use_full and not self.annotations:
+        if self.use_full:
             self.seen_matrix = np.arange(self.action_matrix.shape[0])
         else:
             self.seen_matrix = np.load(f"{data_dir_path}/seen_{data_split}.npy")
@@ -197,8 +197,10 @@ class PigPenDataset(Dataset):
 
         # track seen examples
         if self.data_split == "test":
-            item["seen"] = torch.tensor(self.seen_matrix[index])
-
+            if self.use_full:
+                item["seen"] = torch.tensor(True)
+            else:
+                item["seen"] = torch.tensor(self.seen_matrix[index])
         return item
 
     @lru_cache(maxsize=32)
