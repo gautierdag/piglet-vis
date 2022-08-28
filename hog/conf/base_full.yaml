@@ -3,7 +3,7 @@ defaults:
   - base_config
   - _self_
 
-run_name: "base"
+run_name: "base+full"
 wandb_project: "hog"
 wandb_entity: "itl"
 gpus: "1"
