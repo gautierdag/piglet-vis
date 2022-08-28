@@ -1,0 +1,50 @@
+# needed to validate the config yaml
+defaults:
+  - base_config
+  - _self_
+
+run_name: "base"
+wandb_project: "hog"
+wandb_entity: "itl"
+gpus: "1"
+seed: 42
+fast: false
+images: false
+symbolic: false
+use_full: true
+label_name_embeddings: false
+num_workers: 6
+
+hydra:
+  output_subdir: null
+  run:
+    dir: .
+
+paths:
+  # path to directory containing input data
+  input_dir: "${hydra:runtime.cwd}/data"
+  # path to directory to save output data
+  output_dir: "${hydra:runtime.cwd}/output"
+
+model:
+  hidden_size: 64
+  num_layers: 3
+  num_heads: 4
+  bert_model: "roberta-base"
+  dropout: 0.1
+  action_embedding_size: 13
+  object_embedding_size: 332
+  none_object_index: 106
+  num_attributes: 38
+
+pretrain:
+  batch_size: 512
+  max_epochs: 80
+  learning_rate: 0.001
+  checkpoint_path: null
+
+nlu:
+  batch_size: 64
+  max_epochs: 80
+  learning_rate: 0.00001
+  checkpoint_path: null
