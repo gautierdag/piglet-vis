@@ -3,7 +3,7 @@
 ### Dataset
 
 Our dataset split along with PIGPeN images are unfortunately not yet publicly available as they are several GBs and require a external hosting solution.
-The dataset will be made easily and publicly available soon.
+The dataset will be made publicly available soon.
 
 ### Setup
 
