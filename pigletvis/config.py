@@ -30,7 +30,7 @@ class Train:
 
 
 @dataclass
-class HogConfig:
+class PigletVisConfig:
     wandb_project: str
     wandb_entity: str
 

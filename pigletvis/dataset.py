@@ -16,7 +16,7 @@ from torchtyping import TensorType
 from tqdm import tqdm
 from transformers import AutoModel, AutoTokenizer
 
-from config import HogConfig
+from config import PigletVisConfig
 from models.image_models import BoundingBoxImageModel, get_image_feature_extractor
 from models.mappings import get_actions_mapper, get_objects_mapper
 
@@ -229,7 +229,7 @@ class PigPenDataset(Dataset):
         return images, bboxes
 
 
-def preprocess_label_embeddings(cfg: HogConfig, h5_file_path: str):
+def preprocess_label_embeddings(cfg: PigletVisConfig, h5_file_path: str):
     print("Preprocessing object and action name embeddings")
 
     object_name_mapper = get_objects_mapper(cfg.paths.input_dir, use_full=cfg.use_full)[
@@ -303,7 +303,7 @@ def preprocess_label_embeddings(cfg: HogConfig, h5_file_path: str):
     del bert_model
 
 
-def preprocess_images(cfg: HogConfig):
+def preprocess_images(cfg: PigletVisConfig):
     """
     Preprocess images for the model by running all datasets through the VisionModel
     Saves the output representations and bounding box coordinates to a h5 file

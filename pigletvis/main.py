@@ -3,15 +3,15 @@ from hydra.core.config_store import ConfigStore
 from omegaconf import OmegaConf
 from pytorch_lightning.utilities.seed import seed_everything
 
-from config import HogConfig
+from config import PigletVisConfig
 from train import train
 
 cs = ConfigStore.instance()
-cs.store(name="base_config", node=HogConfig)
+cs.store(name="base_config", node=PigletVisConfig)
 
 
 @hydra.main(config_path="conf", config_name="config")
-def main(cfg: HogConfig) -> None:
+def main(cfg: PigletVisConfig) -> None:
     print(OmegaConf.to_yaml(cfg))
     seed_everything(cfg.seed)
     best_model_path = train(

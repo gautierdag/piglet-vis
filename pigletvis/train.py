@@ -5,13 +5,13 @@ from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.strategies import DDPStrategy
 
-from config import HogConfig
+from config import PigletVisConfig
 from dataset import PigPenDataModule, preprocess_images
 from models.model import Piglet
 
 
 def train(
-    cfg: HogConfig,
+    cfg: PigletVisConfig,
     job_type="pretrain",
     best_model_path=None,
     resume_from_checkpoint=None,
