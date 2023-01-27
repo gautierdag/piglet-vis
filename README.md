@@ -1,4 +1,4 @@
-# Grounding Physical Commonsense Reasoning with Vision 
+# Learning the Effects of Physical Actions in a Multi-modal Environment (EACL-2023)
 
 ### Dataset
 
